@@ -119,6 +119,12 @@ def build_preview_request(task: models.Task, project: models.Project, storage: O
         images = [item for item in media if item.kind == "image"]
         if not images:
             raise ValueError("preview requires at least one uploaded image")
+        min_frames = settings.preview_min_input_frames
+        max_frames = int((task.options or {}).get("max_preview_frames") or settings.preview_max_input_frames)
+        max_frames = min(max(max_frames, min_frames), settings.preview_max_input_frames)
+        if len(images) < min_frames:
+            raise ValueError(f"preview requires at least {min_frames} uploaded images")
+        images = select_evenly(images, max_frames)
         image_dir = raw_dir / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
         for index, item in enumerate(images):
@@ -151,6 +157,22 @@ def build_preview_request(task: models.Task, project: models.Project, storage: O
         timeout_seconds=int((task.options or {}).get("timeout_seconds") or 300),
         options=task.options or {},
     )
+
+
+def select_evenly(items: list[models.MediaAsset], max_items: int) -> list[models.MediaAsset]:
+    if len(items) <= max_items:
+        return items
+    if max_items <= 1:
+        return items[:1]
+    last = len(items) - 1
+    indexes = [round(i * last / (max_items - 1)) for i in range(max_items)]
+    selected: list[models.MediaAsset] = []
+    seen: set[int] = set()
+    for index in indexes:
+        if index not in seen:
+            selected.append(items[index])
+            seen.add(index)
+    return selected
 
 
 def mark_failed(db: Session, task: models.Task, project: models.Project, result: TaskExecutionResult) -> None:

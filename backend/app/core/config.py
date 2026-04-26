@@ -20,6 +20,9 @@ class Settings:
     storage_root: Path
     algorithm_registry_path: Path
     cors_origins: list[str]
+    preview_min_input_frames: int
+    preview_max_input_frames: int
+    preview_default_edgs_epochs: int
 
 
 def get_settings() -> Settings:
@@ -43,5 +46,8 @@ def get_settings() -> Settings:
             "THREE_DGS_CORS_ORIGINS",
             "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
         ).split(","),
+        preview_min_input_frames=int(os.environ.get("PREVIEW_MIN_INPUT_FRAMES", "8")),
+        preview_max_input_frames=int(os.environ.get("PREVIEW_MAX_INPUT_FRAMES", "800")),
+        preview_default_edgs_epochs=int(os.environ.get("PREVIEW_DEFAULT_EDGS_EPOCHS", "3000")),
     )
 

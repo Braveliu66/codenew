@@ -23,7 +23,8 @@ def main() -> int:
         raise RuntimeError(f"video input is missing or empty: {video_path}")
 
     fps = max(int(spec.get("frame_sample_fps") or 2), 1)
-    max_frames = max(int(spec.get("max_preview_frames") or 48), 1)
+    min_frames = max(int(spec.get("min_preview_frames") or 8), 1)
+    max_frames = max(int(spec.get("max_preview_frames") or 800), min_frames)
     pattern = output_dir / "frame_%05d.jpg"
     command = [
         ffmpeg,
@@ -41,8 +42,8 @@ def main() -> int:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "ffmpeg frame extraction failed")
 
     frames = sorted(output_dir.glob("frame_*.jpg"))
-    if not frames:
-        raise RuntimeError("ffmpeg did not produce any preview frames")
+    if len(frames) < min_frames:
+        raise RuntimeError(f"ffmpeg produced {len(frames)} frames; at least {min_frames} are required")
 
     write_result(
         result_path,
@@ -51,7 +52,7 @@ def main() -> int:
             "artifacts": [
                 {"kind": "frame_dir", "path": str(output_dir.resolve())},
             ],
-            "metrics": {"frame_count": len(frames), "frame_sample_fps": fps},
+            "metrics": {"frame_count": len(frames), "frame_sample_fps": fps, "max_preview_frames": max_frames},
         },
     )
     return 0

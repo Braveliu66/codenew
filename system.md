@@ -14,7 +14,7 @@
 - **速度与质量解耦**：极速重建管线追求秒级启动、数分钟产出可交互的粗模型；精细重建管线深度融合多种增强算法，保障高保真、抗模糊、抗稀疏视角。
 - **大规模图片支持**：针对 800 张以上的图片输入，自动切换为轻量级位姿估计器 LiteVGGT，避免传统方案（如 MASt3R）的计算爆炸。
 - **自适应渲染**：Web 端采用连续 LOD（层次细节）技术，根据设备性能、屏幕分辨率、视距动态选择模型细节级别，实现“先显示基础层，逐渐提升清晰度”的用户体验。
-- **高并发与可扩展**：通过分布式 GPU 调度、任务优先级、CDN 边缘缓存保障多用户并发训练/预览需求。
+- **高并发与可扩展**：通过分布式 GPU 调度、任务优先级和对象存储直连保障多用户并发训练/预览需求。
 - **合规与可审计**：所有第三方算法均记录许可证、commit hash 与权重来源；全链路任务、产物、分享操作可追踪。
 
 ---
@@ -23,8 +23,7 @@
 
 ```mermaid
 flowchart LR
-    Browser["用户浏览器\n(桌面/移动/VR)"] --> CDN["CDN / 边缘缓存\n(SPZ, .rad 静态分发)"]
-    CDN --> Frontend["Next.js / React 前端"]
+    Browser["用户浏览器\n(桌面/移动/VR)"] --> Frontend["Next.js / React 前端"]
 
     Frontend --> API["FastAPI 后端 API"]
     Frontend --> EventStream["WebSocket / SSE 事件通道"]
@@ -55,7 +54,6 @@ flowchart LR
     Frontend --> Viewer["Spark 2.0 Viewer\n(连续 LOD, WebGL2, 虚拟显存)"]
     Viewer --> LODGen
     Viewer --> ObjectStore
-    Viewer --> CDN
 ```
 
 **架构关键升级**：

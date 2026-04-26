@@ -131,3 +131,10 @@ Worker 启动时应检查登记信息和本地环境是否一致。
 - 对象路径固定按 `users/{user_id}/projects/{project_id}/...` 隔离；普通用户只能访问自己的项目、素材、任务和产物。
 - `algorithm_registry` 必须记录仓库、许可证、commit、权重来源、命令和启用状态；未启用或缺配置时必须失败。
 - 源码、配置、文档和算法 JSON 规格统一使用 UTF-8。
+
+## 9. Python 3.12 GPU 预览约束
+
+- Docker 预览镜像统一使用 Python 3.12；第三方算法依赖必须在构建期安装并通过 runtime preflight 检查。
+- LiteVGGT、EDGS、Spark 的 repo URL、license、commit hash、local path、weight path 和 commands 必须写入 registry。
+- 预览输入帧数和前端实时 FPS 不混用：后端控制 8 到 800 个输入帧；前端控制 90 FPS 查看体验。
+- 构建期默认使用 `hf-mirror.com`、清华 PyPI 镜像和 `registry.npmmirror.com`，但必须可通过 build args 覆盖。

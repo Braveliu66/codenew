@@ -31,6 +31,13 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile.preview
+      args:
+        LITEVGGT_COMMIT: 4767c17f8b6f176bb751566e92f60eb885040033
+        EDGS_COMMIT: 9a897645eb47c1b24d4f9e4428cd745927bf1ee1
+        SPARK_COMMIT: 915c474795e0c78f7cd1b7f4eb97695028b495c0
+        HF_ENDPOINT: https://hf-mirror.com
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     command: sh -lc "alembic upgrade head && python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
@@ -45,9 +52,12 @@ services:
       JWT_SECRET: change-this-in-production
       DEFAULT_ADMIN_USERNAME: admin
       DEFAULT_ADMIN_PASSWORD: admin123
-      ALGORITHM_REGISTRY_PATH: /workspace/backend/config/algorithm_registry.example.json
+      ALGORITHM_REGISTRY_PATH: /opt/three-dgs/runtime/algorithm_registry.generated.json
       THREE_DGS_STORAGE_ROOT: /workspace/storage
       THREE_DGS_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      PREVIEW_MIN_INPUT_FRAMES: "8"
+      PREVIEW_MAX_INPUT_FRAMES: "800"
+      PREVIEW_DEFAULT_EDGS_EPOCHS: "3000"
     volumes:
       - ../.runtime:/workspace/.runtime
       - ../storage:/workspace/storage
@@ -67,6 +77,13 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile.preview
+      args:
+        LITEVGGT_COMMIT: 4767c17f8b6f176bb751566e92f60eb885040033
+        EDGS_COMMIT: 9a897645eb47c1b24d4f9e4428cd745927bf1ee1
+        SPARK_COMMIT: 915c474795e0c78f7cd1b7f4eb97695028b495c0
+        HF_ENDPOINT: https://hf-mirror.com
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     command: sh -lc "alembic upgrade head && python3 -m backend.workers.preview_worker"
     environment:
       DATABASE_URL: postgresql+psycopg://three_dgs:three_dgs@postgres:5432/three_dgs
@@ -77,8 +94,11 @@ services:
       MINIO_BUCKET: three-dgs
       MINIO_SECURE: "false"
       JWT_SECRET: change-this-in-production
-      ALGORITHM_REGISTRY_PATH: /workspace/backend/config/algorithm_registry.example.json
+      ALGORITHM_REGISTRY_PATH: /opt/three-dgs/runtime/algorithm_registry.generated.json
       THREE_DGS_STORAGE_ROOT: /workspace/storage
+      PREVIEW_MIN_INPUT_FRAMES: "8"
+      PREVIEW_MAX_INPUT_FRAMES: "800"
+      PREVIEW_DEFAULT_EDGS_EPOCHS: "3000"
     volumes:
       - ../.runtime:/workspace/.runtime
       - ../storage:/workspace/storage
@@ -98,10 +118,21 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        VIEWER_TARGET_FPS: "90"
+        VIEWER_QUALITY_UP_FPS: "105"
+        VIEWER_QUALITY_DOWN_FPS: "90"
+        VIEWER_ADAPTIVE_QUALITY: "true"
     ports:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      VIEWER_TARGET_FPS: "90"
+      VIEWER_QUALITY_UP_FPS: "105"
+      VIEWER_QUALITY_DOWN_FPS: "90"
+      VIEWER_ADAPTIVE_QUALITY: "true"
     depends_on:
       - backend
 

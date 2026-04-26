@@ -1,36 +1,44 @@
 # 当前实现进度
 
-更新时间：2026-04-25
+更新时间：2026-04-26
 
 ## 已完成
 
-1. 后端数据层已从运行时 JSON 状态切到 SQLAlchemy 模型，覆盖 `users`、`projects`、`media_assets`、`tasks`、`artifacts`、`feedback`、`worker_heartbeats`、`algorithm_registry`。
-2. 已增加 Alembic 基础配置和 `0001_initial` 迁移；Docker/WSL 环境启动时可执行 `alembic upgrade head`。
-3. 已实现用户名/密码登录、注册、JWT Bearer 鉴权、`user/admin` 角色和普通用户项目隔离。
-4. 上传接口已写入对象存储适配层：Docker 环境使用 MinIO；本机测试环境使用同一接口的本地文件后端，仍记录真实 `file_size` 和 `object_uri`。
-5. 预览任务创建接口已改为只创建 DB task 并推送 Redis 队列，不在 API 请求内直接执行算法。
-6. 已增加独立 preview worker：从 Redis 拉取任务，物化真实上传文件，调用现有 LiteVGGT → EDGS → Spark-SPZ 预览引擎，成功后才上传真实 `preview.spz` 并创建 artifact。
-7. 未配置算法、缺权重、GPU 不可用、SPZ 转换器缺失等路径仍返回显式失败；失败路径不创建成功 artifact。
-8. 前端已增加 `/login` 页面、token 存储、鉴权请求头、未登录跳转和管理员页面权限显示。
-9. Docker Compose 已扩展为 `backend`、`worker`、`postgres`、`redis`、`minio`、`frontend`。
+1. 后端数据层使用 SQLAlchemy 模型和 Alembic migration，覆盖用户、项目、素材、任务、产物、反馈、worker 心跳和算法 registry。
+2. 已实现用户名/密码登录、注册、JWT Bearer 鉴权、user/admin 角色和普通用户项目隔离。
+3. 上传接口写入对象存储适配层；Docker 环境使用 MinIO，本机测试可使用本地文件后端。
+4. 预览任务由 API 创建 DB task 并推送 Redis 队列，真实算法只在独立 worker 中运行。
+5. worker 会物化真实上传文件，按输入帧数规则采样图片或抽取视频帧，调用 LiteVGGT -> EDGS -> Spark-SPZ。
+6. Docker 预览镜像改为 Python 3.12 + CUDA devel，并在构建期自动 clone 算法仓库、下载 LiteVGGT 权重、安装依赖、生成算法 registry。
+7. registry seed 已改为 upsert，Docker 生成的算法 commit、路径、权重和命令会同步到数据库。
+8. 新增 `GET /api/admin/runtime/preflight` 和 `python -m backend.scripts.check_preview_runtime`，用于检查 GPU、torch、算法仓库、权重和命令。
+9. 前端 Spark Viewer 增加自适应质量控制：目标 90 FPS，低于 90 降低画质，高于 105 并稳定后提升画质。
+10. 管理页增加 Runtime Preflight 面板，上传页显示预览输入帧数规则。
+
+## 当前预览规则
+
+- 输入数据帧数和前端渲染 FPS 是两个独立概念。
+- 图片项目至少 8 张图片；超过 800 张时均匀采样 800 张参与预览。
+- 视频项目抽帧后至少 8 帧；最多抽取 800 帧。
+- 前端查看 3DGS 模型时目标实时渲染为 90 FPS，优先保证速度，再提升清晰度。
+- 任务失败时不创建假 `preview.spz` artifact。
 
 ## 已验证
 
-- `python -m unittest discover -s tests`：11 个测试通过。
-- `npm run typecheck`：通过。
-- `npm run build`：通过。
-- UTF-8 读取检查：源码、配置和文档按 UTF-8 可读取。
+- `docker compose -f deploy/docker-compose.preview.yml config` 可解析。
+- 后端新增了输入校验、registry upsert 和 runtime preflight 的单元测试。
+- 前端类型定义和 API 调用已覆盖 Runtime Preflight。
+
+## 待真实环境验证
+
+1. 在 Docker/WSL GPU 环境执行完整 `docker compose -f deploy/docker-compose.preview.yml build`。
+2. 执行 `docker compose -f deploy/docker-compose.preview.yml run --rm worker python -m backend.scripts.check_preview_runtime`。
+3. 用至少 8 张真实图片验证 LiteVGGT -> EDGS -> Spark-SPZ 成功路径。
+4. 用真实视频验证 ffmpeg 抽帧、少帧失败路径和 800 帧上限。
+5. 在前端确认 Spark Viewer 能加载非空 `preview.spz` 并自动调节 FPS/清晰度。
 
 ## 当前限制
 
-1. 当前 Windows CPU-only 环境没有真实 CUDA 算法运行条件，预览任务在未配置算法时会失败为明确错误。
-2. MinIO、Postgres、Redis 的完整联调目标是 Docker/WSL；本机单元测试使用 SQLite 和本地对象存储适配层验证生命周期。
-3. 实时摄像头、Stream3R、精细重建 4.1 和 Mesh 导出仍保持不可用状态，不伪装成功。
-4. 大文件分片上传、SSE/WebSocket 事件推送和管理员用户用量统计尚未实现。
-
-## 下一步
-
-1. 在 Docker/WSL 中启动 Compose，验证 API、worker、Postgres、Redis、MinIO 联通。
-2. 执行真实算法 bootstrap，写入 LiteVGGT、EDGS、Spark-SPZ 的实际 commit、路径和权重。
-3. 用 2-5 张真实图片验证 LiteVGGT → EDGS → Spark-SPZ 成功路径，确认 MinIO 中存在非空 `preview.spz`。
-4. 增加 Playwright 登录、上传、任务失败和项目详情 viewer unavailable 回归测试。
+1. 精细重建、Mesh、LOD 产物导出和实时摄像头仍未纳入本阶段可用范围。
+2. EDGS 使用原仓库许可证，当前记录为非商业研究和个人用途。
+3. Docker 构建依赖 GitHub、Hugging Face 镜像、PyPI 镜像和 npm 镜像可访问。

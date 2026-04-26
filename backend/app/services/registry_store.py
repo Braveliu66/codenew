@@ -22,22 +22,32 @@ def seed_algorithm_registry(db: Session, registry_path: Path | None = None) -> N
         name = str(item["name"])
         existing = db.scalar(select(models.AlgorithmRegistryRecord).where(models.AlgorithmRegistryRecord.name == name))
         if existing:
-            continue
-        db.add(
-            models.AlgorithmRegistryRecord(
-                name=name,
-                repo_url=item.get("repo_url"),
-                license=item.get("license"),
-                commit_hash=item.get("commit_hash"),
-                weight_source=item.get("weight_source"),
-                local_path=item.get("local_path"),
-                enabled=bool(item.get("enabled", False)),
-                notes=item.get("notes"),
-                commands=item.get("commands") or {},
-                weight_paths=item.get("weight_paths") or [],
-                source_type=str(item.get("source_type") or "git"),
+            existing.repo_url = item.get("repo_url")
+            existing.license = item.get("license")
+            existing.commit_hash = item.get("commit_hash")
+            existing.weight_source = item.get("weight_source")
+            existing.local_path = item.get("local_path")
+            existing.enabled = bool(item.get("enabled", False))
+            existing.notes = item.get("notes")
+            existing.commands = item.get("commands") or {}
+            existing.weight_paths = item.get("weight_paths") or []
+            existing.source_type = str(item.get("source_type") or "git")
+        else:
+            db.add(
+                models.AlgorithmRegistryRecord(
+                    name=name,
+                    repo_url=item.get("repo_url"),
+                    license=item.get("license"),
+                    commit_hash=item.get("commit_hash"),
+                    weight_source=item.get("weight_source"),
+                    local_path=item.get("local_path"),
+                    enabled=bool(item.get("enabled", False)),
+                    notes=item.get("notes"),
+                    commands=item.get("commands") or {},
+                    weight_paths=item.get("weight_paths") or [],
+                    source_type=str(item.get("source_type") or "git"),
+                )
             )
-        )
     db.commit()
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import unittest
 import uuid
 from pathlib import Path
@@ -13,6 +14,7 @@ from backend.app.db.session import SessionLocal, configure_database, init_databa
 from backend.app.main import create_app, queue_dependency
 from backend.app.services.object_storage import ObjectStorage
 from backend.app.services.project_store import create_preview_task, create_project, save_upload
+from backend.app.services.registry_store import seed_algorithm_registry
 from backend.app.services.seed import seed_database
 from backend.workers.preview_worker import process_preview_task
 
@@ -96,12 +98,13 @@ class EngineeringBackendTests(unittest.TestCase):
                 json={"name": "queued", "input_type": "images", "tags": ["test"]},
                 headers={"Authorization": f"Bearer {token}"},
             ).json()
-            upload = client.post(
-                f"/api/projects/{project['id']}/media",
-                files={"file": ("image.jpg", b"real upload bytes", "image/jpeg")},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            self.assertEqual(upload.status_code, 200, upload.text)
+            for index in range(8):
+                upload = client.post(
+                    f"/api/projects/{project['id']}/media",
+                    files={"file": (f"image-{index}.jpg", b"real upload bytes", "image/jpeg")},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                self.assertEqual(upload.status_code, 200, upload.text)
 
             task = client.post(
                 f"/api/projects/{project['id']}/tasks/preview",
@@ -119,6 +122,105 @@ class EngineeringBackendTests(unittest.TestCase):
             self.assertEqual(artifacts.status_code, 200)
             self.assertEqual(artifacts.json()["artifacts"], [])
 
+    def test_preview_task_rejects_too_few_images_before_queue(self) -> None:
+        fake_queue = FakeQueue()
+        with self.make_client(fake_queue) as client:
+            token = self.register(client, "few-images")
+            project = client.post(
+                "/api/projects",
+                json={"name": "too few", "input_type": "images", "tags": []},
+                headers={"Authorization": f"Bearer {token}"},
+            ).json()
+            for index in range(7):
+                upload = client.post(
+                    f"/api/projects/{project['id']}/media",
+                    files={"file": (f"image-{index}.jpg", b"real upload bytes", "image/jpeg")},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                self.assertEqual(upload.status_code, 200, upload.text)
+
+            task = client.post(
+                f"/api/projects/{project['id']}/tasks/preview",
+                json={"options": {}},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+            self.assertEqual(task.status_code, 400)
+            self.assertIn("at least 8", task.text)
+            self.assertEqual(fake_queue.enqueued, [])
+
+    def test_preview_task_caps_selected_image_frames_at_800(self) -> None:
+        with SessionLocal() as db:
+            user = models.User(username="cap-user", password_hash="unused", role="user")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            project = create_project(db, user, {"name": "cap", "input_type": "images", "tags": []})
+            for index in range(805):
+                db.add(
+                    models.MediaAsset(
+                        project_id=project.id,
+                        kind="image",
+                        object_uri=f"file:///tmp/image-{index}.jpg",
+                        file_name=f"image-{index}.jpg",
+                        file_size=100,
+                    )
+                )
+            db.commit()
+            db.refresh(project)
+
+            task = create_preview_task(db, project, {"max_preview_frames": 1200})
+
+            self.assertEqual(task.options["max_preview_frames"], 800)
+            self.assertEqual(task.options["input_frame_policy"]["available_input_frames"], 805)
+            self.assertEqual(task.options["input_frame_policy"]["selected_input_frames"], 800)
+
+    def test_algorithm_registry_seed_upserts_existing_records(self) -> None:
+        registry_path = TEST_TMP_ROOT / f"registry-{uuid.uuid4().hex}.json"
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "algorithms": [
+                        {
+                            "name": "LiteVGGT",
+                            "repo_url": "old",
+                            "license": "old",
+                            "commit_hash": "old",
+                            "enabled": False,
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        with SessionLocal() as db:
+            seed_algorithm_registry(db, registry_path)
+            registry_path.write_text(
+                json.dumps(
+                    {
+                        "algorithms": [
+                            {
+                                "name": "LiteVGGT",
+                                "repo_url": "new",
+                                "license": "MIT",
+                                "commit_hash": "new-commit",
+                                "local_path": "/opt/three-dgs/repos/LiteVGGT-repo",
+                                "enabled": True,
+                                "commands": {"run_demo": ["python3", "run.py"]},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            seed_algorithm_registry(db, registry_path)
+
+            record = db.scalar(select(models.AlgorithmRegistryRecord).where(models.AlgorithmRegistryRecord.name == "LiteVGGT"))
+            self.assertIsNotNone(record)
+            self.assertTrue(record.enabled)
+            self.assertEqual(record.repo_url, "new")
+            self.assertEqual(record.commit_hash, "new-commit")
+
     def test_worker_fails_unconfigured_preview_without_artifact(self) -> None:
         with SessionLocal() as db:
             user = models.User(username="worker-user", password_hash="unused", role="user")
@@ -127,7 +229,8 @@ class EngineeringBackendTests(unittest.TestCase):
             db.refresh(user)
             project = create_project(db, user, {"name": "worker", "input_type": "images", "tags": []})
             storage = ObjectStorage()
-            save_upload(db, storage, user, project, "image.jpg", b"real upload bytes", "image/jpeg")
+            for index in range(8):
+                save_upload(db, storage, user, project, f"image-{index}.jpg", b"real upload bytes", "image/jpeg")
             task = create_preview_task(db, project, {"skip_backend_cuda_check": True})
 
             processed = process_preview_task(db, task.id, worker_id="test-worker", storage=storage)

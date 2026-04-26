@@ -327,3 +327,10 @@ Worker 返回结果：
 - `GET /api/projects/{project_id}/viewer-config` 只有在存在真实 `preview_spz` artifact 时返回可加载模型 URL，否则返回 unavailable。
 - `GET /api/algorithms` 为公开算法合规信息；`GET /api/admin/algorithms`、`GET /api/admin/tasks`、`GET /api/admin/workers`、`GET /api/admin/system/resources` 需要管理员角色。
 - artifact 下载优先使用 MinIO presigned URL；本地开发后端会发放 1 小时 artifact token 访问 `/api/artifacts/{artifact_id}/file`。
+
+## 7. Runtime Preflight 与预览输入规则
+
+- 管理员接口 `GET /api/admin/runtime/preflight` 返回 Python、CUDA、torch、GPU、算法仓库、权重、命令和 commit 检查结果。
+- 图片预览任务创建前要求至少 8 张图片；超过 800 张时任务 options 中记录采样上限。
+- 视频预览任务创建前要求已上传视频；抽帧后少于 8 帧时 worker 标记失败且不创建 artifact。
+- `Task.options.input_frame_policy` 记录 `min_input_frames`、`max_input_frames`、`available_input_frames` 和 `selected_input_frames`。

@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from backend.app.core.config import get_settings
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.db import models
@@ -144,7 +145,48 @@ def media_stats(db: Session, project: models.Project) -> dict[str, Any]:
     }
 
 
+def validate_preview_inputs(project: models.Project, options: dict[str, Any] | None = None) -> dict[str, Any]:
+    settings = get_settings()
+    min_frames = settings.preview_min_input_frames
+    max_frames = settings.preview_max_input_frames
+    requested_max = int((options or {}).get("max_preview_frames") or max_frames)
+    if requested_max < min_frames:
+        raise ValueError(f"max_preview_frames must be at least {min_frames}")
+    if requested_max > max_frames:
+        requested_max = max_frames
+
+    media = list(project.media_assets)
+    if project.input_type == "images":
+        image_count = sum(1 for item in media if item.kind == "image")
+        if image_count < min_frames:
+            raise ValueError(f"preview requires at least {min_frames} uploaded images")
+        return {
+            "input_type": "images",
+            "available_input_frames": image_count,
+            "selected_input_frames": min(image_count, requested_max),
+            "min_input_frames": min_frames,
+            "max_input_frames": max_frames,
+        }
+    if project.input_type == "video":
+        video_count = sum(1 for item in media if item.kind == "video")
+        if video_count < 1:
+            raise ValueError("preview requires an uploaded video")
+        return {
+            "input_type": "video",
+            "available_input_frames": None,
+            "selected_input_frames": requested_max,
+            "min_input_frames": min_frames,
+            "max_input_frames": max_frames,
+        }
+    raise ValueError("camera preview is not implemented")
+
+
 def create_preview_task(db: Session, project: models.Project, options: dict[str, Any] | None = None) -> models.Task:
+    options = dict(options or {})
+    preview_inputs = validate_preview_inputs(project, options)
+    options["max_preview_frames"] = preview_inputs["selected_input_frames"]
+    options.setdefault("min_preview_frames", preview_inputs["min_input_frames"])
+    options.setdefault("input_frame_policy", preview_inputs)
     task = models.Task(
         project_id=project.id,
         type="preview",
@@ -152,7 +194,7 @@ def create_preview_task(db: Session, project: models.Project, options: dict[str,
         priority=100,
         progress=0,
         current_stage="queued",
-        options=options or {},
+        options=options,
     )
     project.status = "PREVIEW_RUNNING"
     project.error_message = None

@@ -32,6 +32,10 @@ def main() -> int:
         "train.no_densify=True",
         f"gs.dataset.source_path={source_path.resolve()}",
         f"gs.dataset.model_path={output_dir.resolve()}",
+        "init_wC.use=True",
+        "init_wC.matches_per_ref=15000",
+        "init_wC.nns_per_ref=3",
+        "init_wC.num_refs=180",
         "wandb.mode=disabled",
     ]
     completed = subprocess.run(command, cwd=str(repo_path), capture_output=True, text=True, check=False)

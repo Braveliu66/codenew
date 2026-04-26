@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from backend.app.core.config import get_settings
+
 from .environment import AlgorithmEnvironmentChecker
 from .errors import AlgorithmErrorCode, AlgorithmIssue
 from .models import (
@@ -33,6 +35,11 @@ class PreviewEngine:
         self.runner = runner or RealAlgorithmCommandRunner()
 
     def build_plan(self, request: PreviewTaskRequest) -> PreviewPipelinePlan:
+        settings = get_settings()
+        min_frames = settings.preview_min_input_frames
+        max_frames = settings.preview_max_input_frames
+        requested_max = int(request.options.get("max_preview_frames") or max_frames)
+        requested_max = min(max(requested_max, min_frames), max_frames)
         stages: list[PipelineStage] = []
         skipped: list[SkippedStage] = []
         requirements: list[AlgorithmRequirement] = []
@@ -108,8 +115,10 @@ class PreviewEngine:
             pipeline_options={
                 "input_type": request.input_type,
                 "frame_sample_fps": int(request.options.get("frame_sample_fps", 2)),
-                "max_preview_frames": int(request.options.get("max_preview_frames", 48)),
-                "edgs_epochs": int(request.options.get("edgs_epochs", 3000)),
+                "min_preview_frames": min_frames,
+                "max_preview_frames": requested_max,
+                "preview_frame_cap": max_frames,
+                "edgs_epochs": int(request.options.get("edgs_epochs") or settings.preview_default_edgs_epochs),
                 "require_real_spz": True,
             },
         )
@@ -208,6 +217,31 @@ class PreviewEngine:
                     logs=logs,
                 )
             image_dir = Path(image_dir_value)
+            frame_count = int((stage_results["video_frame_extraction"].get("metrics") or {}).get("frame_count") or 0)
+            if frame_count < int(plan.pipeline_options["min_preview_frames"]):
+                return self._failed(
+                    request,
+                    plan,
+                    AlgorithmErrorCode.INVALID_TASK_OPTIONS,
+                    (
+                        "Video preview requires at least "
+                        f"{plan.pipeline_options['min_preview_frames']} extracted frames; got {frame_count}"
+                    ),
+                    logs=logs,
+                )
+        else:
+            image_count = len([path for path in image_dir.iterdir() if path.is_file()])
+            if image_count < int(plan.pipeline_options["min_preview_frames"]):
+                return self._failed(
+                    request,
+                    plan,
+                    AlgorithmErrorCode.INVALID_TASK_OPTIONS,
+                    (
+                        "Image preview requires at least "
+                        f"{plan.pipeline_options['min_preview_frames']} images; got {image_count}"
+                    ),
+                    logs=logs,
+                )
 
         litevggt_result = self._run_stage(
             request=request,
@@ -219,6 +253,8 @@ class PreviewEngine:
                 "image_dir": str(image_dir),
                 "output_dir": str(request.work_dir / "litevggt"),
                 "mode": "preview",
+                "min_input_frames": plan.pipeline_options["min_preview_frames"],
+                "max_input_frames": plan.pipeline_options["max_preview_frames"],
             },
         )
         if litevggt_result[1]:
@@ -367,7 +403,19 @@ class PreviewEngine:
                 stage=stage_name,
                 details=issue.details,
             )
-        return result, issue, [str(spec_path), str(result_path)]
+        log_entries = [str(spec_path), str(result_path)]
+        if result and isinstance(result.get("_runner"), dict):
+            runner_info = result["_runner"]
+            if runner_info.get("stdout_tail"):
+                log_entries.append(f"{algorithm} stdout: {runner_info['stdout_tail']}")
+            if runner_info.get("stderr_tail"):
+                log_entries.append(f"{algorithm} stderr: {runner_info['stderr_tail']}")
+        if issue and issue.details:
+            if issue.details.get("stdout"):
+                log_entries.append(f"{algorithm} stdout: {issue.details['stdout']}")
+            if issue.details.get("stderr"):
+                log_entries.append(f"{algorithm} stderr: {issue.details['stderr']}")
+        return result, issue, log_entries
 
     def _algorithm_context(self) -> dict[str, dict[str, Any]]:
         return {

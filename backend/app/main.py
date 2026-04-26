@@ -44,6 +44,7 @@ from backend.app.services.project_store import (
     worker_heartbeats,
 )
 from backend.app.services.registry_store import load_registry_from_db, registry_to_response
+from backend.app.services.runtime_preflight import build_runtime_preflight
 from backend.app.services.seed import seed_database
 from backend.app.services.serializers import (
     artifact_to_dict,
@@ -184,6 +185,10 @@ def create_app() -> FastAPI:
         workers = [worker_to_dict(item) for item in worker_heartbeats(db)]
         return {"workers": workers}
 
+    @app.get("/api/admin/runtime/preflight")
+    def admin_runtime_preflight(_: models.User = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
+        return build_runtime_preflight(load_registry_from_db(db))
+
     @app.get("/api/admin/tasks")
     def admin_tasks(_: models.User = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
         return {"tasks": [task_to_dict(task) for task in all_tasks(db)]}
@@ -281,7 +286,10 @@ def create_app() -> FastAPI:
         project = get_project_for_user(db, user, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="project not found")
-        task = create_preview_task(db, project, (payload or {}).get("options") or {})
+        try:
+            task = create_preview_task(db, project, (payload or {}).get("options") or {})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             queue.enqueue_preview(task.id)
         except TaskQueueError as exc:

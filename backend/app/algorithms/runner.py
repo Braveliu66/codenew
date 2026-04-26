@@ -88,6 +88,10 @@ class RealAlgorithmCommandRunner:
                 details={"error": str(exc), "result_path": str(result_path)},
             )
 
+        result["_runner"] = {
+            "stdout_tail": completed.stdout[-4000:],
+            "stderr_tail": completed.stderr[-4000:],
+        }
         artifact_issue = self._validate_artifacts(entry.name, result)
         if artifact_issue:
             return None, artifact_issue

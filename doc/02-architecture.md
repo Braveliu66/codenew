@@ -141,3 +141,10 @@ viewer          Spark 2.0
 - API 使用 SQLAlchemy 2.x 模型和 Alembic 迁移；启动时 seed 默认管理员和算法登记记录。
 - preview worker 与 API 共享同一数据库、对象存储和算法 registry，但只有 worker 执行真实算法命令。
 - 本机 CPU-only 开发环境允许 SQLite/本地对象存储适配用于测试，但 Docker/WSL 目标架构以 PostgreSQL、Redis、MinIO 为准。
+
+## 8. GPU 预览链路同步
+
+- Docker 预览镜像使用 Python 3.12 和 CUDA devel，在构建期自动安装 LiteVGGT、EDGS、Spark 及权重。
+- 预览链路为 `FFmpeg(视频)` -> `LiteVGGT COLMAP export` -> `EDGS train` -> `Spark-SPZ convert`。
+- 输入数据帧数由后端控制：至少 8 帧/张，最多 800 帧/张；前端 90 FPS 只表示查看器实时渲染目标。
+- 前端 Spark Viewer 通过 npm 依赖随 Next.js 构建打包，运行时只访问后端 API 和对象存储产物 URL。

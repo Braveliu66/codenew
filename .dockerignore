@@ -1,0 +1,15 @@
+.git
+.gitignore
+.runtime
+.tmp_tests
+storage
+backend-dev.log
+backend-dev.err.log
+frontend/frontend-dev.log
+frontend/frontend-dev.err.log
+frontend/.next
+frontend/node_modules
+frontend/out
+frontend/tsconfig.tsbuildinfo
+__pycache__
+*.pyc

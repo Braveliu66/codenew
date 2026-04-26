@@ -100,3 +100,25 @@ export interface AlgorithmEntry {
   weight_paths?: string[];
   source_type?: string;
 }
+
+export interface RuntimePreflightAlgorithm {
+  name: string;
+  enabled: boolean;
+  ready: boolean;
+  repo_url?: string | null;
+  license?: string | null;
+  commit_hash?: string | null;
+  local_path?: string | null;
+  weight_paths: string[];
+  commands: Record<string, string[]>;
+  issues: string[];
+}
+
+export interface RuntimePreflight {
+  python: Record<string, unknown>;
+  gpu: Record<string, unknown>;
+  torch: Record<string, unknown>;
+  algorithms: RuntimePreflightAlgorithm[];
+  errors: string[];
+  warnings: string[];
+}

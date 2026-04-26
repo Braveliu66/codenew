@@ -20,7 +20,7 @@
     {
       "name": "EDGS",
       "repo_url": "https://github.com/CompVis/EDGS",
-      "license": "Apache-2.0",
+      "license": "Non-commercial research and personal use (see EDGS LICENSE.txt)",
       "commit_hash": null,
       "weight_source": null,
       "local_path": null,

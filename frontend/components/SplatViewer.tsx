@@ -2,63 +2,144 @@
 
 import { Maximize2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { Object3D, WebGLRenderer } from "three";
 import { artifactUrl } from "@/lib/api";
+
+type ViewerState = "idle" | "loading" | "ready" | "error";
+
+interface SparkRendererLike {
+  lodSplatScale?: number;
+  maxStdDev?: number;
+  maxPixelRadius?: number;
+  dispose?: () => void;
+}
+
+interface SplatMeshLike {
+  rotation: { y: number };
+  lodScale?: number;
+  numSplats?: number;
+  dispose?: () => void;
+}
+
+interface QualityLevel {
+  label: string;
+  pixelRatio: number;
+  lodSplatScale: number;
+  meshLodScale: number;
+  maxStdDev: number;
+  maxPixelRadius: number;
+}
+
+const QUALITY_LEVELS: QualityLevel[] = [
+  { label: "speed", pixelRatio: 0.65, lodSplatScale: 0.45, meshLodScale: 0.75, maxStdDev: Math.sqrt(5), maxPixelRadius: 192 },
+  { label: "balanced", pixelRatio: 0.8, lodSplatScale: 0.65, meshLodScale: 0.9, maxStdDev: Math.sqrt(6), maxPixelRadius: 256 },
+  { label: "normal", pixelRatio: 1, lodSplatScale: 0.85, meshLodScale: 1, maxStdDev: Math.sqrt(7), maxPixelRadius: 384 },
+  { label: "sharp", pixelRatio: 1.15, lodSplatScale: 1, meshLodScale: 1.1, maxStdDev: Math.sqrt(8), maxPixelRadius: 512 },
+  { label: "max", pixelRatio: 1.3, lodSplatScale: 1.2, meshLodScale: 1.2, maxStdDev: Math.sqrt(8), maxPixelRadius: 512 }
+];
+
+const TARGET_FPS = readNumber(process.env.VIEWER_TARGET_FPS, 90);
+const QUALITY_UP_FPS = readNumber(process.env.VIEWER_QUALITY_UP_FPS, 105);
+const QUALITY_DOWN_FPS = readNumber(process.env.VIEWER_QUALITY_DOWN_FPS, 90);
+const ADAPTIVE_QUALITY = (process.env.VIEWER_ADAPTIVE_QUALITY ?? "true").toLowerCase() !== "false";
 
 export function SplatViewer({ modelUrl }: { modelUrl?: string | null }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [state, setState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [message, setMessage] = useState("真实 preview_spz 产物生成后会在这里加载。");
+  const [state, setState] = useState<ViewerState>("idle");
+  const [message, setMessage] = useState("A real preview_spz artifact will load here.");
+  const [fps, setFps] = useState(0);
+  const [qualityIndex, setQualityIndex] = useState(1);
+  const [splatCount, setSplatCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!modelUrl || !hostRef.current) {
       setState("idle");
-      setMessage("真实 preview_spz 产物生成后会在这里加载。");
+      setMessage("A real preview_spz artifact will load here.");
+      setFps(0);
+      setSplatCount(null);
       return;
     }
+
     const resolvedModelUrl = modelUrl;
     let cancelled = false;
+    let animationFrame = 0;
+    let resizeObserver: ResizeObserver | undefined;
     let cleanup: (() => void) | undefined;
+    const qualityRef = { current: qualityIndex };
+    const fpsWindow = { startedAt: performance.now(), frames: 0, highStreak: 0, lowStreak: 0 };
+
     async function mountViewer() {
       try {
         setState("loading");
-        setMessage("正在初始化 Spark Viewer");
+        setMessage("Initializing Spark Viewer");
         const THREE = await import("three");
-        const Spark = (await import("@sparkjsdev/spark")) as Record<string, unknown>;
-        const SplatMesh = Spark.SplatMesh as undefined | (new (options: { url: string }) => any);
-        if (!SplatMesh) {
-          throw new Error("当前 @sparkjsdev/spark 包未暴露 SplatMesh");
-        }
+        const Spark = (await import("@sparkjsdev/spark") as unknown) as {
+          SplatMesh?: new (options: { url: string; lod?: boolean | "quality"; lodAbove?: number }) => SplatMeshLike;
+          SparkRenderer?: new (options: Record<string, unknown>) => SparkRendererLike;
+        };
+        const SplatMesh = Spark.SplatMesh;
+        if (!SplatMesh) throw new Error("@sparkjsdev/spark did not expose SplatMesh");
+
         const host = hostRef.current;
         if (!host || cancelled) return;
         host.innerHTML = "";
+
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(55, host.clientWidth / Math.max(host.clientHeight, 1), 0.01, 1000);
         camera.position.set(0, 0, 3);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
         renderer.setSize(host.clientWidth, host.clientHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         host.appendChild(renderer.domElement);
-        const splat = new SplatMesh({ url: artifactUrl(resolvedModelUrl) });
-        scene.add(splat);
-        let frame = 0;
-        const render = () => {
-          frame = requestAnimationFrame(render);
+
+        const initialQuality = QUALITY_LEVELS[qualityRef.current];
+        const sparkRenderer = Spark.SparkRenderer
+          ? new Spark.SparkRenderer({
+              renderer,
+              lodSplatScale: initialQuality.lodSplatScale,
+              maxStdDev: initialQuality.maxStdDev,
+              maxPixelRadius: initialQuality.maxPixelRadius
+            })
+          : null;
+        if (sparkRenderer) scene.add(sparkRenderer as unknown as Object3D);
+
+        const splat = new SplatMesh({ url: artifactUrl(resolvedModelUrl), lod: true, lodAbove: 100000 });
+        scene.add(splat as unknown as Object3D);
+        applyQuality(renderer, sparkRenderer, splat, initialQuality, host);
+
+        resizeObserver = new ResizeObserver(() => {
+          if (!host.clientWidth || !host.clientHeight) return;
+          camera.aspect = host.clientWidth / host.clientHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(host.clientWidth, host.clientHeight);
+          applyQuality(renderer, sparkRenderer, splat, QUALITY_LEVELS[qualityRef.current], host);
+        });
+        resizeObserver.observe(host);
+
+        const render = (now: number) => {
+          animationFrame = requestAnimationFrame(render);
           splat.rotation.y += 0.002;
           renderer.render(scene, camera);
+          updateFps(now, fpsWindow, qualityRef, renderer, sparkRenderer, splat, host, setFps, setQualityIndex);
+          if (typeof splat.numSplats === "number") setSplatCount(splat.numSplats);
         };
-        render();
+        animationFrame = requestAnimationFrame(render);
+
         cleanup = () => {
-          cancelAnimationFrame(frame);
+          cancelAnimationFrame(animationFrame);
+          resizeObserver?.disconnect();
+          splat.dispose?.();
+          sparkRenderer?.dispose?.();
           renderer.dispose();
           host.innerHTML = "";
         };
         setState("ready");
-        setMessage("Spark Viewer 已加载真实 SPZ。");
+        setMessage("Spark Viewer loaded a real SPZ artifact.");
       } catch (error) {
         setState("error");
-        setMessage(error instanceof Error ? error.message : "Spark Viewer 加载失败");
+        setMessage(error instanceof Error ? error.message : "Spark Viewer failed to load");
       }
     }
+
     void mountViewer();
     return () => {
       cancelled = true;
@@ -66,15 +147,86 @@ export function SplatViewer({ modelUrl }: { modelUrl?: string | null }) {
     };
   }, [modelUrl]);
 
+  const quality = QUALITY_LEVELS[qualityIndex] ?? QUALITY_LEVELS[0];
   return (
     <section className="viewer-shell">
       <div ref={hostRef} className="viewer-canvas" />
       <div className={`viewer-overlay ${state}`}>
         <span>{message}</span>
-        <button className="icon-button" type="button" onClick={() => hostRef.current?.requestFullscreen?.()} aria-label="全屏">
+        <span className="viewer-stats">
+          {state === "ready" ? `${Math.round(fps)} FPS / ${quality.label} / target ${TARGET_FPS}` : quality.label}
+          {splatCount ? ` / ${splatCount.toLocaleString()} splats` : ""}
+        </span>
+        <button className="icon-button" type="button" onClick={() => hostRef.current?.requestFullscreen?.()} aria-label="Fullscreen">
           <Maximize2 size={17} />
         </button>
       </div>
     </section>
   );
+}
+
+function updateFps(
+  now: number,
+  fpsWindow: { startedAt: number; frames: number; highStreak: number; lowStreak: number },
+  qualityRef: { current: number },
+  renderer: WebGLRenderer,
+  sparkRenderer: SparkRendererLike | null,
+  splat: SplatMeshLike,
+  host: HTMLDivElement,
+  setFps: (value: number) => void,
+  setQualityIndex: (value: number) => void
+) {
+  fpsWindow.frames += 1;
+  const elapsed = now - fpsWindow.startedAt;
+  if (elapsed < 1000) return;
+  const currentFps = (fpsWindow.frames * 1000) / elapsed;
+  fpsWindow.frames = 0;
+  fpsWindow.startedAt = now;
+  setFps(currentFps);
+  if (!ADAPTIVE_QUALITY) return;
+
+  if (currentFps < QUALITY_DOWN_FPS && qualityRef.current > 0) {
+    fpsWindow.lowStreak += 1;
+    fpsWindow.highStreak = 0;
+    if (fpsWindow.lowStreak >= 1) {
+      qualityRef.current -= 1;
+      fpsWindow.lowStreak = 0;
+      applyQuality(renderer, sparkRenderer, splat, QUALITY_LEVELS[qualityRef.current], host);
+      setQualityIndex(qualityRef.current);
+    }
+  } else if (currentFps > QUALITY_UP_FPS && qualityRef.current < QUALITY_LEVELS.length - 1) {
+    fpsWindow.highStreak += 1;
+    fpsWindow.lowStreak = 0;
+    if (fpsWindow.highStreak >= 3) {
+      qualityRef.current += 1;
+      fpsWindow.highStreak = 0;
+      applyQuality(renderer, sparkRenderer, splat, QUALITY_LEVELS[qualityRef.current], host);
+      setQualityIndex(qualityRef.current);
+    }
+  } else {
+    fpsWindow.lowStreak = 0;
+    fpsWindow.highStreak = 0;
+  }
+}
+
+function applyQuality(
+  renderer: WebGLRenderer,
+  sparkRenderer: SparkRendererLike | null,
+  splat: SplatMeshLike,
+  quality: QualityLevel,
+  host: HTMLDivElement
+) {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
+  renderer.setSize(host.clientWidth, host.clientHeight);
+  if (sparkRenderer) {
+    sparkRenderer.lodSplatScale = quality.lodSplatScale;
+    sparkRenderer.maxStdDev = quality.maxStdDev;
+    sparkRenderer.maxPixelRadius = quality.maxPixelRadius;
+  }
+  splat.lodScale = quality.meshLodScale;
+}
+
+function readNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

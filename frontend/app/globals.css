@@ -121,6 +121,7 @@ p { line-height: 1.55; }
 .viewer-overlay { position: absolute; inset: auto 12px 12px 12px; min-height: 42px; background: rgba(255,255,255,0.92); border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; color: var(--ink); }
 .viewer-overlay.error { color: var(--danger); }
 .viewer-overlay.ready { color: #0d684f; }
+.viewer-stats { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
 
 .table { display: grid; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .table-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr 0.9fr; gap: 12px; padding: 12px; background: var(--surface); border-bottom: 1px solid var(--line); align-items: center; }

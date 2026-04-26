@@ -1,4 +1,4 @@
-import type { AlgorithmEntry, Artifact, AuthResponse, MediaAsset, Project, Task, User, ViewerConfig } from "@/lib/types";
+import type { AlgorithmEntry, Artifact, AuthResponse, MediaAsset, Project, RuntimePreflight, Task, User, ViewerConfig } from "@/lib/types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const TOKEN_KEY = "three_dgs_token";
@@ -68,6 +68,7 @@ export const api = {
   resources: () => request<{ cpu: Record<string, unknown>; gpu: Record<string, unknown>; workers?: Record<string, unknown> }>("/api/admin/system/resources"),
   algorithms: () => request<{ algorithms: AlgorithmEntry[] }>("/api/algorithms", { auth: false }),
   adminAlgorithms: () => request<{ algorithms: AlgorithmEntry[] }>("/api/admin/algorithms"),
+  runtimePreflight: () => request<RuntimePreflight>("/api/admin/runtime/preflight"),
   adminTasks: () => request<{ tasks: Task[] }>("/api/admin/tasks"),
   workers: () => request<{ workers: unknown[]; message?: string }>("/api/admin/workers"),
   projectSummary: () => request<Record<string, number>>("/api/projects/summary"),

@@ -1,7 +1,7 @@
 import type { Task } from "@/lib/types";
 
 export function TaskProgress({ task }: { task?: Task | null }) {
-  if (!task) return <div className="empty-state">暂无任务</div>;
+  if (!task) return <div className="empty-state">No task</div>;
   return (
     <div className={`task-progress ${task.status}`}>
       <div className="row between">
