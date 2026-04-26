@@ -66,10 +66,12 @@ COPY backend/requirements.txt backend/requirements.txt
 RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install -r backend/requirements.txt
 
+COPY model-cache /workspace/model-cache
 COPY backend/scripts/build_preview_runtime.py backend/scripts/build_preview_runtime.py
 RUN python3 backend/scripts/build_preview_runtime.py \
     --runtime-root /opt/three-dgs \
     --registry-output /opt/three-dgs/runtime/algorithm_registry.generated.json \
+    --weight-cache-root /workspace/model-cache \
     --workspace /workspace
 
 COPY . .

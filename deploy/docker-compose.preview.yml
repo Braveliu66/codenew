@@ -54,7 +54,7 @@ services:
       DEFAULT_ADMIN_PASSWORD: admin123
       ALGORITHM_REGISTRY_PATH: /opt/three-dgs/runtime/algorithm_registry.generated.json
       THREE_DGS_STORAGE_ROOT: /workspace/storage
-      THREE_DGS_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      THREE_DGS_CORS_ORIGINS: http://localhost:3001,http://127.0.0.1:3001,http://localhost:3000,http://127.0.0.1:3000
       PREVIEW_MIN_INPUT_FRAMES: "8"
       PREVIEW_MAX_INPUT_FRAMES: "800"
       PREVIEW_DEFAULT_EDGS_EPOCHS: "3000"
@@ -126,7 +126,7 @@ services:
         VIEWER_QUALITY_DOWN_FPS: "90"
         VIEWER_ADAPTIVE_QUALITY: "true"
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       VIEWER_TARGET_FPS: "90"

@@ -32,11 +32,11 @@ export default function LoginPage() {
 
   return (
     <div className="page auth-page">
-      <section className="panel auth-panel stack">
+      <section className="panel padded auth-panel stack">
         <div>
           <p className="eyebrow">Account</p>
-          <h1>{mode === "login" ? "登录" : "注册账号"}</h1>
-          <p className="muted">使用用户名和密码进入工作台。默认 Docker 种子管理员为 admin / admin123，部署时应通过环境变量替换。</p>
+          <h1>{mode === "login" ? "登录工作台" : "注册账号"}</h1>
+          <p className="muted">使用真实后端账号进入重建工作台。开发环境默认管理员通常是 admin / admin123，部署时请通过环境变量替换。</p>
         </div>
         <div className="segmented">
           <button className={mode === "login" ? "active" : ""} type="button" onClick={() => setMode("login")}>登录</button>

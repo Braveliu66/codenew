@@ -22,7 +22,7 @@
   - LiteVGGT `4767c17f8b6f176bb751566e92f60eb885040033`
   - EDGS `9a897645eb47c1b24d4f9e4428cd745927bf1ee1`
   - Spark `915c474795e0c78f7cd1b7f4eb97695028b495c0`
-- 下载 LiteVGGT 权重 `te_dict.pt`。
+- 优先从 `model-cache/litevggt/te_dict.pt` 复制 LiteVGGT 权重；本地缓存缺失时才下载 `te_dict.pt`。
 - 安装 LiteVGGT、EDGS、Spark 依赖。
 - 生成 `/opt/three-dgs/runtime/algorithm_registry.generated.json`。
 
@@ -35,6 +35,31 @@
 | npm | `NPM_CONFIG_REGISTRY=https://registry.npmmirror.com` |
 
 这些值可通过 Docker build args 覆盖。
+
+## 本地模型权重缓存
+
+所有模型权重都必须先落到项目根目录的本地缓存，再进入 Docker 镜像。后续接入新模型时也按这个规则处理，避免每次构建环境都重新下载大文件。
+
+当前 LiteVGGT 权重约定：
+
+```text
+model-cache/litevggt/te_dict.pt
+```
+
+首次准备或补齐缓存：
+
+```bash
+python backend/scripts/download_model_weights.py
+docker compose -f deploy/docker-compose.preview.yml build backend worker
+```
+
+构建规则：
+
+- `backend/Dockerfile.preview` 会把根目录 `model-cache` 复制到镜像内的 `/workspace/model-cache`。
+- `backend/scripts/build_preview_runtime.py` 会先查找 `/workspace/model-cache/litevggt/te_dict.pt`，命中后复制到 `/opt/three-dgs/models/litevggt/te_dict.pt`。
+- 只有本地缓存缺失时才允许按 `HF_ENDPOINT` 等配置从远端下载。
+- 大权重文件不提交 Git；`model-cache/**/*.pt`、`model-cache/**/*.bin`、`model-cache/**/*.safetensors` 已被 `.gitignore` 忽略，目录用 `.gitkeep` 保留。
+- 新增模型时必须同步更新下载脚本、构建脚本、Dockerfile/Compose 复制路径和 `algorithm_registry` 中的 `weight_source`/`weight_path`，不能只在容器临时目录里一次性下载。
 
 ## 关键环境变量
 
@@ -66,9 +91,11 @@ docker compose -f deploy/docker-compose.preview.yml up --build
 
 启动后：
 
-- 前端：http://localhost:3000
+- 前端：http://localhost:3001
 - 后端健康检查：http://localhost:8000/health
 - MinIO Console：http://localhost:9001
+
+前端容器内部仍监听 `3000`，Compose 对外映射到主机 `3001`。本机开发也使用 `3001`，尽量让主机 `3000` 保持空闲，避免和算法 demo 或其他容器端口冲突。
 
 默认开发管理员为 `admin / admin123`，只用于本地验证。
 
@@ -112,6 +139,8 @@ python -m backend.scripts.check_preview_runtime
 ## 常见问题
 
 - 构建阶段下载失败：检查 GitHub、`hf-mirror.com`、PyPI 镜像和 npm 镜像访问。
+- 构建阶段反复下载 LiteVGGT 权重：先确认 `model-cache/litevggt/te_dict.pt` 存在，并在构建日志中看到 `Using cached LiteVGGT weight`。
+- `No module named 'transformer_engine'`：当前 LiteVGGT 运行依赖 `transformer-engine[pytorch]`，重新 build `backend` 和 `worker` 镜像后再运行预检。
 - `runtime/preflight` 显示 commit mismatch：清理镜像缓存后重新 build。
 - `torch.cuda.is_available=false`：检查 Docker Desktop WSL2 GPU、NVIDIA 驱动和 Compose GPU reservation。
 - EDGS CUDA 扩展编译失败：优先检查 CUDA_HOME、PyTorch CUDA 版本和编译工具链。

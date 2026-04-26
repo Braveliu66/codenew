@@ -46,8 +46,13 @@ export interface MediaAsset {
   project_id: string;
   kind: "image" | "video";
   object_uri: string;
+  thumbnail_uri?: string | null;
   file_name: string;
   file_size: number;
+  width?: number | null;
+  height?: number | null;
+  duration_seconds?: number | null;
+  quality_flags?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -56,7 +61,10 @@ export interface Task {
   project_id: string;
   type: "preview" | "fine" | "lod" | "mesh_export";
   status: "queued" | "running" | "succeeded" | "failed" | "canceled";
+  priority?: number;
   progress: number;
+  worker_id?: string | null;
+  options?: Record<string, unknown>;
   current_stage: string;
   eta_seconds?: number | null;
   error_code?: string | null;
@@ -76,6 +84,8 @@ export interface Artifact {
   object_uri: string;
   file_name: string;
   file_size: number;
+  checksum?: string | null;
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 

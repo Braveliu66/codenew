@@ -46,7 +46,7 @@ const ADAPTIVE_QUALITY = (process.env.VIEWER_ADAPTIVE_QUALITY ?? "true").toLower
 export function SplatViewer({ modelUrl }: { modelUrl?: string | null }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<ViewerState>("idle");
-  const [message, setMessage] = useState("A real preview_spz artifact will load here.");
+  const [message, setMessage] = useState("真实 preview_spz 产物会加载在这里。");
   const [fps, setFps] = useState(0);
   const [qualityIndex, setQualityIndex] = useState(1);
   const [splatCount, setSplatCount] = useState<number | null>(null);
@@ -54,7 +54,7 @@ export function SplatViewer({ modelUrl }: { modelUrl?: string | null }) {
   useEffect(() => {
     if (!modelUrl || !hostRef.current) {
       setState("idle");
-      setMessage("A real preview_spz artifact will load here.");
+      setMessage("真实 preview_spz 产物会加载在这里。");
       setFps(0);
       setSplatCount(null);
       return;
@@ -71,7 +71,7 @@ export function SplatViewer({ modelUrl }: { modelUrl?: string | null }) {
     async function mountViewer() {
       try {
         setState("loading");
-        setMessage("Initializing Spark Viewer");
+        setMessage("正在初始化 Spark Viewer");
         const THREE = await import("three");
         const Spark = (await import("@sparkjsdev/spark") as unknown) as {
           SplatMesh?: new (options: { url: string; lod?: boolean | "quality"; lodAbove?: number }) => SplatMeshLike;
@@ -133,10 +133,10 @@ export function SplatViewer({ modelUrl }: { modelUrl?: string | null }) {
           host.innerHTML = "";
         };
         setState("ready");
-        setMessage("Spark Viewer loaded a real SPZ artifact.");
+        setMessage("Spark Viewer 已加载真实 SPZ 产物。");
       } catch (error) {
         setState("error");
-        setMessage(error instanceof Error ? error.message : "Spark Viewer failed to load");
+        setMessage(error instanceof Error ? error.message : "Spark Viewer 加载失败");
       }
     }
 

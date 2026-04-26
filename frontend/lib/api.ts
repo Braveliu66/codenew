@@ -74,6 +74,7 @@ export const api = {
   projectSummary: () => request<Record<string, number>>("/api/projects/summary"),
   projects: () => request<{ projects: Project[] }>("/api/projects"),
   project: (id: string) => request<Project>(`/api/projects/${id}`),
+  deleteProject: (id: string) => request<{ deleted: boolean }>(`/api/projects/${id}`, { method: "DELETE" }),
   createProject: (payload: { name: string; input_type: Project["input_type"]; tags: string[] }) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(payload) }),
   uploadMedia: (projectId: string, file: File) => {
@@ -81,11 +82,16 @@ export const api = {
     body.append("file", file);
     return request<MediaAsset>(`/api/projects/${projectId}/media`, { method: "POST", body });
   },
+  media: (projectId: string) => request<{ media: MediaAsset[] }>(`/api/projects/${projectId}/media`),
   mediaStats: (projectId: string) => request<Record<string, unknown>>(`/api/projects/${projectId}/media/stats`),
   startPreview: (projectId: string) =>
     request<Task>(`/api/projects/${projectId}/tasks/preview`, { method: "POST", body: JSON.stringify({ options: {} }) }),
+  startFine: (projectId: string) =>
+    request<Task>(`/api/projects/${projectId}/tasks/fine`, { method: "POST", body: JSON.stringify({ options: {} }) }),
   task: (id: string) => request<Task>(`/api/tasks/${id}`),
+  cancelTask: (id: string) => request<Task>(`/api/tasks/${id}/cancel`, { method: "POST" }),
   artifacts: (projectId: string) => request<{ artifacts: Artifact[] }>(`/api/projects/${projectId}/artifacts`),
+  artifactDownloadUrl: (artifactId: string) => request<{ url: string; expires_in_seconds: number }>(`/api/artifacts/${artifactId}/download-url`),
   viewerConfig: (projectId: string) => request<ViewerConfig>(`/api/projects/${projectId}/viewer-config`),
   feedback: (payload: { title: string; content: string; project_id?: string }) =>
     request<Record<string, unknown>>("/api/feedback", { method: "POST", body: JSON.stringify(payload) })

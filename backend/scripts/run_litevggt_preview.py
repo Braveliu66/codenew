@@ -84,7 +84,7 @@ def run_litevggt(
     processed_image_dir: Path,
     sparse_dir: Path,
     output_dir: Path,
-) -> dict[str, object]:
+    ) -> dict[str, object]:
     import torch
     import transformer_engine.pytorch as te
     from transformer_engine.common.recipe import DelayedScaling, Format

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -29,6 +32,7 @@ from backend.app.services.object_storage import ObjectStorage, ObjectStorageErro
 from backend.app.services.project_store import (
     all_tasks,
     create_feedback,
+    create_fine_task,
     create_preview_task,
     create_project,
     delete_project,
@@ -88,6 +92,242 @@ def storage_dependency() -> ObjectStorage:
 
 def queue_dependency() -> PreviewTaskQueue:
     return PreviewTaskQueue()
+
+
+def current_cpu_percent() -> float | None:
+    proc = Path("/proc/stat")
+    if proc.exists():
+        first = read_proc_cpu(proc)
+        time.sleep(0.05)
+        second = read_proc_cpu(proc)
+        if first and second:
+            idle_delta = second["idle"] - first["idle"]
+            total_delta = second["total"] - first["total"]
+            if total_delta > 0:
+                return round(max(0.0, min(100.0, (1 - idle_delta / total_delta) * 100)), 1)
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        value = completed.stdout.strip()
+        return round(float(value), 1) if value else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def read_proc_cpu(path: Path) -> dict[str, int] | None:
+    try:
+        parts = path.read_text(encoding="utf-8").splitlines()[0].split()
+    except (OSError, IndexError):
+        return None
+    if len(parts) < 5 or parts[0] != "cpu":
+        return None
+    values = [int(part) for part in parts[1:] if part.isdigit()]
+    if len(values) < 4:
+        return None
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return {"idle": idle, "total": sum(values)}
+
+
+def current_gpu_resources() -> dict[str, Any]:
+    if not shutil.which("nvidia-smi"):
+        return {
+            "available": False,
+            "usage_percent": None,
+            "memory_total": None,
+            "memory_used": None,
+            "memory_usage_percent": None,
+            "message": "nvidia-smi is not available in this runtime",
+        }
+    try:
+        completed = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.total,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "available": False,
+            "usage_percent": None,
+            "memory_total": None,
+            "memory_used": None,
+            "memory_usage_percent": None,
+            "message": str(exc),
+        }
+    line = completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else ""
+    parts = [part.strip() for part in line.split(",")]
+    if len(parts) < 3:
+        return {
+            "available": False,
+            "usage_percent": None,
+            "memory_total": None,
+            "memory_used": None,
+            "memory_usage_percent": None,
+            "message": "nvidia-smi returned no GPU utilization data",
+        }
+    usage = float(parts[0])
+    total = float(parts[1])
+    used = float(parts[2])
+    return {
+        "available": True,
+        "usage_percent": usage,
+        "memory_total": total,
+        "memory_used": used,
+        "memory_usage_percent": round((used / total) * 100, 1) if total > 0 else None,
+        "message": None,
+    }
+
+
+def collect_task_logs(result: Any) -> list[str]:
+    logs = list(getattr(result, "logs", []) or [])
+    for error in getattr(result, "errors", []) or []:
+        code = str(error.get("code") or "ERROR")
+        message = str(error.get("message") or "")
+        logs.append(f"[{code}] {message}")
+        details = error.get("details") or {}
+        stdout = str(details.get("stdout") or "").strip()
+        stderr = str(details.get("stderr") or "").strip()
+        if stdout:
+            logs.append("stdout:\n" + stdout)
+        if stderr:
+            logs.append("stderr:\n" + stderr)
+    return logs
+
+
+def build_fine_request(task: models.Task, project: models.Project, storage: ObjectStorage) -> FineTaskRequest:
+    settings = get_settings()
+    work_dir = settings.storage_root / "work" / task.id
+    raw_dir = work_dir / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    media = list(project.media_assets)
+    if project.input_type == "images":
+        images = [item for item in media if item.kind == "image"]
+        if not images:
+            raise ValueError("fine reconstruction requires at least one uploaded image")
+        image_dir = raw_dir / "images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        for index, item in enumerate(images):
+            suffix = Path(item.file_name).suffix.lower() or ".jpg"
+            target = image_dir / f"{index:04d}{suffix}"
+            storage.download_to_path(item.object_uri, target)
+        raw_uri = str(image_dir)
+        frame_count = len(images)
+    elif project.input_type == "video":
+        videos = [item for item in media if item.kind == "video"]
+        if not videos:
+            raise ValueError("fine reconstruction requires an uploaded video")
+        source = videos[0]
+        suffix = Path(source.file_name).suffix or ".mp4"
+        target = raw_dir / f"source{suffix}"
+        storage.download_to_path(source.object_uri, target)
+        raw_uri = str(target)
+        frame_count = 0
+    else:
+        raise ValueError("camera fine reconstruction is not implemented")
+    return FineTaskRequest(
+        task_id=task.id,
+        project_id=project.id,
+        input_type=project.input_type,
+        raw_uri=raw_uri,
+        work_dir=work_dir,
+        output_prefix=f"minio://{storage.bucket}/users/{project.owner_id}/projects/{project.id}/fine",
+        frame_count=frame_count,
+        timeout_seconds=int((task.options or {}).get("timeout_seconds") or 7200),
+        options=task.options or {},
+    )
+
+
+def process_fine_task_background(task_id: str) -> None:
+    storage = ObjectStorage()
+    with SessionLocal() as db:
+        task = db.get(models.Task, task_id)
+        if not task:
+            return
+        project = db.get(models.Project, task.project_id)
+        if not project or task.status == "canceled":
+            return
+        task.status = "running"
+        task.progress = 5
+        task.current_stage = "materializing_inputs"
+        task.started_at = task.started_at or models.utc_now()
+        task.error_code = None
+        task.error_message = None
+        project.status = "FINE_RUNNING"
+        project.error_message = None
+        db.commit()
+        try:
+            request = build_fine_request(task, project, storage)
+            task.current_stage = "fine_engine"
+            task.progress = 15
+            db.commit()
+            result = FineSynthesisEngine(load_registry_from_db(db)).execute(request)
+            if result.status != "succeeded":
+                message = "; ".join(str(error.get("message") or "") for error in result.errors).strip() or "Fine reconstruction failed"
+                first_error = result.errors[0] if result.errors else {}
+                task.status = "failed"
+                task.progress = 100
+                task.current_stage = "failed"
+                task.error_code = str(first_error.get("code") or "FINE_RECONSTRUCTION_FAILED")
+                task.error_message = message
+                task.metrics = result.to_dict()
+                task.logs = collect_task_logs(result)
+                task.finished_at = models.utc_now()
+                project.status = "FAILED"
+                project.error_message = message
+                db.commit()
+                return
+            for item in result.artifacts:
+                source = Path(str(item.get("path") or ""))
+                if not source.is_file():
+                    continue
+                file_name = str(item.get("file_name") or source.name)
+                object_name = f"users/{project.owner_id}/projects/{project.id}/fine/{file_name}"
+                object_uri = storage.put_file(object_name, source, content_type="application/octet-stream")
+                db.add(models.Artifact(
+                    project_id=project.id,
+                    task_id=task.id,
+                    kind=str(item.get("kind") or "fine_artifact"),
+                    object_uri=object_uri,
+                    file_name=file_name,
+                    file_size=source.stat().st_size,
+                    checksum=item.get("checksum"),
+                    artifact_metadata={"pipeline": "fine_engine"},
+                ))
+            task.status = "succeeded"
+            task.progress = 100
+            task.current_stage = "completed"
+            task.metrics = result.to_dict()
+            task.logs = collect_task_logs(result)
+            task.finished_at = models.utc_now()
+            project.status = "COMPLETED"
+            project.error_message = None
+            db.commit()
+        except Exception as exc:
+            task.status = "failed"
+            task.progress = 100
+            task.current_stage = "failed"
+            task.error_code = "FINE_RECONSTRUCTION_FAILED"
+            task.error_message = str(exc)
+            task.logs = [str(exc)]
+            task.finished_at = models.utc_now()
+            project.status = "FAILED"
+            project.error_message = str(exc)
+            db.commit()
 
 
 def create_app() -> FastAPI:
@@ -157,17 +397,12 @@ def create_app() -> FastAPI:
         return user_to_dict(user)
 
     @app.get("/api/admin/system/resources")
-    def resources(_: models.User = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
+    def resources(_: models.User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
         workers = worker_heartbeats(db)
+        gpu = current_gpu_resources()
         return {
-            "cpu": {"available": True, "usage_percent": None},
-            "gpu": {
-                "available": bool(shutil.which("nvidia-smi")),
-                "usage_percent": None,
-                "memory_total": None,
-                "memory_used": None,
-                "message": None if shutil.which("nvidia-smi") else "nvidia-smi is not available in this runtime",
-            },
+            "cpu": {"available": True, "usage_percent": current_cpu_percent()},
+            "gpu": gpu,
             "workers": {"count": len(workers), "active_task_count": sum(1 for item in workers if item.current_task_id)},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -302,6 +537,24 @@ def create_app() -> FastAPI:
             project.error_message = str(exc)
             db.commit()
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return task_to_dict(task)
+
+    @app.post("/api/projects/{project_id}/tasks/fine")
+    def create_fine_task_endpoint(
+        project_id: str,
+        background_tasks: BackgroundTasks,
+        payload: dict[str, Any] | None = None,
+        user: models.User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        project = get_project_for_user(db, user, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project not found")
+        try:
+            task = create_fine_task(db, project, (payload or {}).get("options") or {})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        background_tasks.add_task(process_fine_task_background, task.id)
         return task_to_dict(task)
 
     @app.post("/api/tasks/preview/plan")

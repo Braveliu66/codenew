@@ -144,7 +144,7 @@ viewer          Spark 2.0
 
 ## 8. GPU 预览链路同步
 
-- Docker 预览镜像使用 Python 3.12 和 CUDA devel，在构建期自动安装 LiteVGGT、EDGS、Spark 及权重。
+- Docker 预览镜像使用 Python 3.12 和 CUDA devel，在构建期自动安装 LiteVGGT、EDGS、Spark；模型权重优先从项目根目录 `model-cache/<model-name>/...` 复制，缺失时才远端下载。
 - 预览链路为 `FFmpeg(视频)` -> `LiteVGGT COLMAP export` -> `EDGS train` -> `Spark-SPZ convert`。
 - 输入数据帧数由后端控制：至少 8 帧/张，最多 800 帧/张；前端 90 FPS 只表示查看器实时渲染目标。
 - 前端 Spark Viewer 通过 npm 依赖随 Next.js 构建打包，运行时只访问后端 API 和对象存储产物 URL。

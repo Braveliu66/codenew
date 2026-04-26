@@ -9,11 +9,13 @@
 3. 上传接口写入对象存储适配层；Docker 环境使用 MinIO，本机测试可使用本地文件后端。
 4. 预览任务由 API 创建 DB task 并推送 Redis 队列，真实算法只在独立 worker 中运行。
 5. worker 会物化真实上传文件，按输入帧数规则采样图片或抽取视频帧，调用 LiteVGGT -> EDGS -> Spark-SPZ。
-6. Docker 预览镜像改为 Python 3.12 + CUDA devel，并在构建期自动 clone 算法仓库、下载 LiteVGGT 权重、安装依赖、生成算法 registry。
+6. Docker 预览镜像改为 Python 3.12 + CUDA devel，并在构建期自动 clone 算法仓库、优先使用本地 `model-cache/litevggt/te_dict.pt`、安装依赖、生成算法 registry。
 7. registry seed 已改为 upsert，Docker 生成的算法 commit、路径、权重和命令会同步到数据库。
 8. 新增 `GET /api/admin/runtime/preflight` 和 `python -m backend.scripts.check_preview_runtime`，用于检查 GPU、torch、算法仓库、权重和命令。
 9. 前端 Spark Viewer 增加自适应质量控制：目标 90 FPS，低于 90 降低画质，高于 105 并稳定后提升画质。
 10. 管理页增加 Runtime Preflight 面板，上传页显示预览输入帧数规则。
+11. 模型权重缓存规则已固定：后续新增模型都先放入 `model-cache/<model-name>/...`，构建脚本命中本地缓存后再复制进运行镜像，缺失时才远端下载。
+12. LiteVGGT 运行环境改为显式安装 `transformer-engine[pytorch]`，不在脚本里模拟或降级替代算法依赖。
 
 ## 当前预览规则
 
@@ -36,9 +38,10 @@
 3. 用至少 8 张真实图片验证 LiteVGGT -> EDGS -> Spark-SPZ 成功路径。
 4. 用真实视频验证 ffmpeg 抽帧、少帧失败路径和 800 帧上限。
 5. 在前端确认 Spark Viewer 能加载非空 `preview.spz` 并自动调节 FPS/清晰度。
+6. 确认构建日志显示 `Using cached LiteVGGT weight`，并确认 `transformer_engine` 在 backend/worker 镜像内可导入。
 
 ## 当前限制
 
 1. 精细重建、Mesh、LOD 产物导出和实时摄像头仍未纳入本阶段可用范围。
 2. EDGS 使用原仓库许可证，当前记录为非商业研究和个人用途。
-3. Docker 构建依赖 GitHub、Hugging Face 镜像、PyPI 镜像和 npm 镜像可访问。
+3. Docker 构建仍依赖 GitHub、PyPI 镜像和 npm 镜像可访问；Hugging Face 权重下载只在本地 `model-cache` 缺失时发生。

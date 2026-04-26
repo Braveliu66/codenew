@@ -28,6 +28,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build preview algorithm runtime for Docker images.")
     parser.add_argument("--runtime-root", default="/opt/three-dgs")
     parser.add_argument("--registry-output", default="/opt/three-dgs/runtime/algorithm_registry.generated.json")
+    parser.add_argument("--weight-cache-root", default="/workspace/model-cache")
     parser.add_argument("--workspace", default="/workspace")
     parser.add_argument("--skip-install", action="store_true")
     args = parser.parse_args()
@@ -35,6 +36,7 @@ def main() -> int:
     runtime_root = Path(args.runtime_root)
     repos_root = runtime_root / "repos"
     models_root = runtime_root / "models"
+    weight_cache_root = Path(args.weight_cache_root)
     registry_output = Path(args.registry_output)
     workspace = Path(args.workspace)
     repos_root.mkdir(parents=True, exist_ok=True)
@@ -45,7 +47,7 @@ def main() -> int:
     litevggt = clone_checkout(LITEVGGT_REPO, repos_root / "LiteVGGT-repo", env_commit("LITEVGGT_COMMIT"))
     edgs = clone_checkout(EDGS_REPO, repos_root / "EDGS", env_commit("EDGS_COMMIT"), recursive=True)
     spark = clone_checkout(SPARK_REPO, repos_root / "spark", env_commit("SPARK_COMMIT"))
-    weight_path = download_litevggt_weight(models_root)
+    weight_path = resolve_litevggt_weight(models_root, weight_cache_root)
 
     if not args.skip_install:
         install_python_runtime(litevggt, edgs)
@@ -93,11 +95,16 @@ def clone_checkout(url: str, target: Path, commit: str, *, recursive: bool = Fal
     return target.resolve()
 
 
-def download_litevggt_weight(models_root: Path) -> Path:
+def resolve_litevggt_weight(models_root: Path, weight_cache_root: Path) -> Path:
     endpoint = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com").rstrip("/")
     target = models_root / "litevggt" / LITEVGGT_WEIGHT_FILE
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() and target.stat().st_size > 0:
+        return target.resolve()
+    cached = weight_cache_root / "litevggt" / LITEVGGT_WEIGHT_FILE
+    if cached.exists() and cached.stat().st_size > 0:
+        print(f"Using cached LiteVGGT weight from {cached}", flush=True)
+        shutil.copy2(cached, target)
         return target.resolve()
     url = f"{endpoint}/{LITEVGGT_WEIGHT_REPO}/resolve/main/{LITEVGGT_WEIGHT_FILE}"
     print(f"Downloading LiteVGGT weights from {url}", flush=True)
@@ -111,6 +118,7 @@ def download_litevggt_weight(models_root: Path) -> Path:
 def install_python_runtime(litevggt: Path, edgs: Path) -> None:
     pip_install(["--upgrade", "pip", "setuptools", "wheel"])
     pip_install(["-r", str(litevggt / "requirements.txt")])
+    pip_install(["transformer-engine[pytorch]"])
     diff_raster = edgs / "submodules" / "gaussian-splatting" / "submodules" / "diff-gaussian-rasterization"
     simple_knn = edgs / "submodules" / "gaussian-splatting" / "submodules" / "simple-knn"
     roma = edgs / "submodules" / "RoMa"

@@ -185,7 +185,7 @@ def mark_failed(db: Session, task: models.Task, project: models.Project, result:
     task.error_code = str(first_error.get("code") or AlgorithmErrorCode.PREVIEW_ARTIFACT_INVALID.value)
     task.error_message = message
     task.metrics = result.to_dict()
-    task.logs = result.logs or []
+    task.logs = collect_task_logs(result)
     task.finished_at = models.utc_now()
     project.status = "FAILED"
     project.error_message = message
@@ -220,6 +220,22 @@ def persist_success(db: Session, task: models.Task, project: models.Project, res
     project.status = "PREVIEW_READY"
     project.error_message = None
     db.commit()
+
+
+def collect_task_logs(result: TaskExecutionResult) -> list[str]:
+    logs = list(result.logs or [])
+    for error in result.errors or []:
+        code = str(error.get("code") or "ERROR")
+        message = str(error.get("message") or "")
+        logs.append(f"[{code}] {message}")
+        details = error.get("details") or {}
+        stdout = str(details.get("stdout") or "").strip()
+        stderr = str(details.get("stderr") or "").strip()
+        if stdout:
+            logs.append("stdout:\n" + stdout)
+        if stderr:
+            logs.append("stderr:\n" + stderr)
+    return logs
 
 
 def write_heartbeat(db: Session, *, worker_id: str, current_task_id: str | None) -> None:

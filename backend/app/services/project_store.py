@@ -204,6 +204,41 @@ def create_preview_task(db: Session, project: models.Project, options: dict[str,
     return task
 
 
+def validate_fine_inputs(project: models.Project) -> dict[str, Any]:
+    media = list(project.media_assets)
+    if project.input_type == "images":
+        image_count = sum(1 for item in media if item.kind == "image")
+        if image_count < 1:
+            raise ValueError("fine reconstruction requires at least one uploaded image")
+        return {"input_type": "images", "frame_count": image_count}
+    if project.input_type == "video":
+        video_count = sum(1 for item in media if item.kind == "video")
+        if video_count < 1:
+            raise ValueError("fine reconstruction requires an uploaded video")
+        return {"input_type": "video", "frame_count": 0}
+    raise ValueError("camera fine reconstruction is not implemented")
+
+
+def create_fine_task(db: Session, project: models.Project, options: dict[str, Any] | None = None) -> models.Task:
+    options = dict(options or {})
+    options.setdefault("input_policy", validate_fine_inputs(project))
+    task = models.Task(
+        project_id=project.id,
+        type="fine",
+        status="queued",
+        priority=80,
+        progress=0,
+        current_stage="queued",
+        options=options,
+    )
+    project.status = "FINE_QUEUED"
+    project.error_message = None
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
 def user_can_access_task(db: Session, user: models.User, task: models.Task) -> bool:
     if user.role == "admin":
         return True

@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3DGS 重建平台 - 专业工作流 完整版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        
+        .dropdown-enter-active, .dropdown-leave-active { transition: all 0.2s ease-out; transform-origin: top; }
+        .dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: scaleY(0.95); }
+        
+        /* 酷炫的背景模式 */
+        .splat-bg { 
+            background-image: radial-gradient(circle, #333 1px, transparent 1px); 
+            background-size: 24px 24px; 
+            background-color: #0f172a; 
+        }
+        
+        /* 玻璃拟态基础类 */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .glass-panel-dark {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .camera-overlay { background: linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 15%, transparent 85%, rgba(0,0,0,0.6) 100%); }
+        
+        @keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(400%); } }
+    </style>
+</head>
+<body class="bg-[#f8fafc] text-slate-800 font-sans h-screen overflow-hidden selection:bg-blue-200">
+    <div id="app" class="flex h-full w-full relative">
+
+        <!-- ================= 全局 Toast 提示 ================= -->
+        <transition name="fade">
+            <div v-if="toastMsg" class="fixed top-20 left-1/2 transform -translate-x-1/2 z-[100] bg-gray-900/90 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md flex items-center border border-gray-700">
+                <i class="fa-solid fa-circle-check text-green-400 mr-2 text-lg"></i>
+                <span class="font-medium tracking-wide">{{ toastMsg }}</span>
+            </div>
+        </transition>
+
+        <!-- ================= 侧边栏 ================= -->
+        <div class="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shadow-[2px_0_10px_rgba(0,0,0,0.02)] z-30 relative shrink-0">
+            <div>
+                <div class="h-16 flex items-center justify-center border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition" @click="currentPage = 'home'">
+                    <div class="w-8 h-8 rounded bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mr-3 shadow-md shadow-blue-500/30">
+                        <i class="fa-solid fa-cube text-white text-sm"></i>
+                    </div>
+                    <span class="text-xl font-black tracking-widest text-slate-800">3DGS</span>
+                </div>
+                <nav class="p-4 space-y-1.5">
+                    <button @click="currentPage = 'home'" :class="['w-full flex items-center p-3 rounded-xl transition-all duration-200', (currentPage === 'home' || currentPage === 'upload' || currentPage === 'realtime') ? 'bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-600 font-bold shadow-sm border border-blue-100/50' : 'hover:bg-slate-100 text-slate-600 font-medium']">
+                        <i class="fa-solid fa-plus-circle w-6 text-lg"></i> 新建项目
+                    </button>
+                    <button @click="currentPage = 'projects'" :class="['w-full flex items-center p-3 rounded-xl transition-all duration-200', (currentPage === 'projects' || currentPage === 'project-detail') ? 'bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-600 font-bold shadow-sm border border-blue-100/50' : 'hover:bg-slate-100 text-slate-600 font-medium']">
+                        <i class="fa-solid fa-layer-group w-6 text-lg"></i> 项目控制台
+                    </button>
+                </nav>
+            </div>
+            
+            <!-- 用户底部入口 -->
+            <div class="p-4 border-t border-slate-100">
+                <div @click="currentPage = 'user'" :class="['flex items-center space-x-3 p-2.5 rounded-xl cursor-pointer transition-all duration-200 border', currentPage === 'user' ? 'bg-white shadow-md border-slate-200' : 'border-transparent hover:bg-slate-100']">
+                    <img :src="userInfo.avatar" class="w-10 h-10 rounded-full border-2 border-white shadow-sm object-cover">
+                    <div class="text-sm flex-1 overflow-hidden">
+                        <p class="font-bold text-slate-700 truncate w-full">{{ userInfo.nickname }}</p>
+                        <p class="text-[11px] text-slate-400">Pro License</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= 主内容区 ================= -->
+        <div class="flex-1 flex flex-col h-full relative overflow-hidden bg-slate-50/50">
+            
+            <!-- ====== 顶部极客风状态栏 ====== -->
+            <header class="h-16 glass-panel border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-20 sticky top-0">
+                <!-- 左侧面包屑 / 任务进度 -->
+                <div class="flex-1 relative">
+                    <!-- 无任务时显示面包屑 -->
+                    <div v-if="activeTasks.length === 0" class="text-slate-600 font-semibold tracking-wide flex items-center">
+                        <span v-if="currentPage === 'home'">WORKSPACE / 新建</span>
+                        <span v-if="currentPage === 'upload'"><span class="text-slate-400 cursor-pointer hover:text-blue-500 transition" @click="currentPage='home'">WORKSPACE</span> / 离线上传与预览</span>
+                        <span v-if="currentPage === 'realtime'"><span class="text-slate-400 cursor-pointer hover:text-blue-500 transition" @click="currentPage='home'">WORKSPACE</span> / 流式实时建模</span>
+                        <span v-if="currentPage === 'projects'">PROJECTS / 列表大厅</span>
+                        <span v-if="currentPage === 'project-detail'"><span class="text-slate-400 cursor-pointer hover:text-blue-500 transition" @click="currentPage='projects'">PROJECTS</span> / {{ currentViewProject?.name }}</span>
+                        <span v-if="currentPage === 'user'">SETTINGS / 用户中心</span>
+                    </div>
+
+                    <!-- 有任务时显示聚合状态 -->
+                    <div v-else class="w-full max-w-2xl relative">
+                        <div class="flex items-center bg-gradient-to-r from-blue-50 to-white border border-blue-200 px-4 py-2 rounded-lg cursor-pointer hover:shadow-md transition-all shadow-sm" @click="isTaskDropdownOpen = !isTaskDropdownOpen">
+                            <i class="fa-solid fa-circle-notch text-blue-500 mr-3 fa-spin"></i>
+                            <div class="flex-1 text-sm font-bold text-blue-900">
+                                <div v-if="activeTasks.length === 1" class="flex justify-between items-center w-full">
+                                    <span>[{{ activeTasks[0].type === 'preview' ? '快速预览' : '精细训练' }}] {{ activeTasks[0].projectName }}</span>
+                                    <span class="text-xs text-blue-600 bg-blue-100/50 px-2 py-0.5 rounded-full">剩余: {{ activeTasks[0].eta }} | {{ activeTasks[0].progress }}% <i class="fa-solid fa-chevron-down ml-1"></i></span>
+                                </div>
+                                <div v-else class="flex justify-between items-center w-full">
+                                    <span>后台正在运行 {{ activeTasks.length }} 个节点任务</span>
+                                    <i :class="['fa-solid transition-transform', isTaskDropdownOpen ? 'fa-chevron-up' : 'fa-chevron-down']"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 下拉多任务面板 -->
+                        <transition name="dropdown">
+                            <div v-if="isTaskDropdownOpen" class="absolute top-[calc(100%+8px)] left-0 w-full glass-panel shadow-2xl rounded-xl p-2 z-50 border border-slate-200">
+                                <div v-for="task in activeTasks" :key="task.id" class="p-3 bg-white hover:bg-slate-50 rounded-lg mb-1 border border-slate-100 cursor-pointer transition flex flex-col gap-2" @click="goToTask(task)">
+                                    <div class="flex justify-between text-xs font-bold text-slate-700">
+                                        <span class="flex items-center"><span :class="['w-2 h-2 rounded-full mr-2', task.type === 'preview' ? 'bg-orange-400' : 'bg-blue-500']"></span>{{ task.projectName }} - {{ task.desc }}</span>
+                                        <span class="text-blue-600 font-mono">{{ task.eta }}</span>
+                                    </div>
+                                    <div class="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                        <div :class="['h-full rounded-full transition-all duration-300', task.type === 'preview' ? 'bg-gradient-to-r from-orange-400 to-yellow-400' : 'bg-gradient-to-r from-blue-500 to-indigo-500']" :style="{width: task.progress + '%'}"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </transition>
+                    </div>
+                </div>
+
+                <!-- 右侧：酷炫硬件资源监控 -->
+                <div class="flex space-x-2 text-[11px] font-mono ml-6 font-bold tracking-wider">
+                    <div class="flex items-center bg-teal-50/80 px-3 py-1.5 rounded-lg border border-teal-200 text-teal-700 shadow-sm">
+                        <i class="fa-solid fa-microchip mr-1.5 opacity-70"></i> CPU <span class="ml-2 text-teal-900">28%</span>
+                    </div>
+                    <div class="flex items-center bg-orange-50/80 px-3 py-1.5 rounded-lg border border-orange-200 text-orange-700 shadow-sm">
+                        <i class="fa-solid fa-server mr-1.5 opacity-70"></i> GPU <span class="ml-2 text-orange-900">96%</span>
+                    </div>
+                    <div class="flex items-center bg-indigo-50/80 px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 shadow-sm">
+                        <i class="fa-solid fa-memory mr-1.5 opacity-70"></i> VRAM <span class="ml-2 text-indigo-900">18.2G</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- ====== 页面路由内容区 ====== -->
+            <main class="flex-1 overflow-x-hidden overflow-y-auto p-6 relative">
+
+                <!-- ================= 1. 首页方式选择 (Home) ================= -->
+                <div v-if="currentPage === 'home'" class="max-w-5xl mx-auto animate-[fadeIn_0.3s_ease-out]">
+                    <h1 class="text-3xl font-black text-slate-800 mt-6 mb-10 text-center tracking-wide">选择重建工作流</h1>
+                    <div class="grid grid-cols-2 gap-8">
+                        <div @click="currentPage = 'upload'" class="bg-white border-2 border-dashed border-blue-300 rounded-3xl p-12 flex flex-col items-center cursor-pointer hover:border-blue-500 hover:shadow-[0_10px_40px_-10px_rgba(59,130,246,0.3)] transition-all group relative overflow-hidden">
+                            <div class="w-24 h-24 bg-gradient-to-br from-blue-50 to-blue-100 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500 text-blue-500 group-hover:text-blue-600 shadow-inner">
+                                <i class="fa-solid fa-images text-4xl"></i>
+                            </div>
+                            <h2 class="text-2xl font-bold text-slate-800 mb-2 z-10">离线数据集重建</h2>
+                            <p class="text-slate-500 z-10 text-sm">支持断点续传、前向模型极速预览与补传</p>
+                        </div>
+                        <div @click="currentPage = 'realtime'" class="bg-white border-2 border-slate-200 rounded-3xl p-12 flex flex-col items-center cursor-pointer hover:border-teal-400 hover:shadow-[0_10px_40px_-10px_rgba(45,212,191,0.3)] transition-all group">
+                            <div class="w-24 h-24 bg-gradient-to-br from-teal-50 to-teal-100 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500 text-teal-500 group-hover:text-teal-600 shadow-inner">
+                                <i class="fa-solid fa-video text-4xl"></i>
+                            </div>
+                            <h2 class="text-2xl font-bold text-slate-800 mb-2">实时流式扫描</h2>
+                            <p class="text-slate-500 text-sm">连接摄像头设备，边走边拍实时生成点云</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 恢复缺失的底部提示语 -->
+                    <div class="text-center mt-12 text-slate-400 text-sm bg-slate-100/50 inline-block px-6 py-2 rounded-full mx-auto flex justify-center w-max items-center">
+                        <i class="fa-solid fa-circle-info mr-2 text-blue-400"></i> 提示：您可以随时在左侧导航栏点击「新建项目」返回此页面，或在顶部任务栏监控后台进度。
+                    </div>
+                </div>
+
+                <!-- ================= 2. 离线上传与预览 (Upload) ================= -->
+                <div v-if="currentPage === 'upload'" class="h-full flex gap-6 animate-[fadeIn_0.3s_ease-out]">
+                    
+                    <!-- 左侧：图片列表区 (支持补传) -->
+                    <div class="w-5/12 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
+                        <div class="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                            <span class="font-bold text-slate-700">源数据集 ({{ files.length }} 张)</span>
+                            <button @click="simulateUpload" class="text-sm bg-white border border-blue-500 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition shadow-sm font-medium">
+                                <i class="fa-solid fa-plus mr-1"></i> 添加图片/补传
+                            </button>
+                        </div>
+                        
+                        <div class="flex-1 overflow-y-auto p-4 bg-slate-50/50">
+                            <div class="grid grid-cols-3 gap-3">
+                                <div v-for="(file, index) in files" :key="index" class="relative group aspect-square rounded-xl overflow-hidden border border-slate-200 bg-white shadow-sm">
+                                    <img :src="file.thumb" class="w-full h-full object-cover cursor-zoom-in" @click="openLightbox(file.thumb)">
+                                    
+                                    <!-- 补传标记 -->
+                                    <div v-if="file.isAppended" class="absolute top-1.5 left-1.5 bg-gradient-to-r from-orange-400 to-yellow-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow-md z-10">新补传</div>
+                                    
+                                    <!-- 删除遮罩 -->
+                                    <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2 pointer-events-none">
+                                        <div class="flex justify-end pointer-events-auto">
+                                            <button @click="files.splice(index, 1)" class="text-white bg-red-500/90 hover:bg-red-600 rounded-full w-7 h-7 flex items-center justify-center text-xs shadow-md"><i class="fa-solid fa-trash"></i></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- 拖拽上传占位区 -->
+                                <div class="border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-400 hover:border-blue-400 hover:text-blue-500 cursor-pointer bg-slate-50 transition-colors" @click="simulateUpload">
+                                    <i class="fa-solid fa-cloud-arrow-up text-2xl mb-2"></i>
+                                    <span class="text-xs font-medium">拖拽至此上传</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 底部控制栏 -->
+                        <div class="p-5 border-t border-slate-100 bg-white flex space-x-3 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.02)]">
+                            <button @click="startPreview" :disabled="isPreviewRunning" class="flex-1 bg-white border-2 border-blue-500 text-blue-600 py-3 rounded-xl font-bold hover:bg-blue-50 transition disabled:opacity-50 flex justify-center items-center">
+                                <i class="fa-solid fa-bolt mr-2"></i> {{ previewState === 'finished' ? '更新极速预览' : '生成极速预览' }}
+                            </button>
+                            <button @click="startTrainingTask('离线模型_01')" class="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-xl font-bold hover:opacity-90 transition shadow-lg shadow-blue-500/30 flex justify-center items-center">
+                                <i class="fa-solid fa-wand-magic-sparkles mr-2"></i> 开始精细重建
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 右侧：3D 极速预览区 -->
+                    <div class="w-7/12 flex flex-col rounded-2xl overflow-hidden shadow-md border border-slate-800 bg-[#0f172a] relative">
+                        <!-- 悬浮工具条 -->
+                        <div class="absolute top-4 left-4 glass-panel-dark text-slate-300 p-1.5 rounded-lg flex flex-col space-y-1 z-20 text-lg">
+                            <button class="w-9 h-9 flex items-center justify-center rounded hover:bg-white/10 hover:text-white transition"><i class="fa-solid fa-camera"></i></button>
+                            <button class="w-9 h-9 flex items-center justify-center rounded hover:bg-white/10 hover:text-white transition"><i class="fa-solid fa-cube"></i></button>
+                        </div>
+
+                        <!-- 画布内容 -->
+                        <div class="flex-1 splat-bg relative flex items-center justify-center overflow-hidden">
+                            <!-- 未开始 -->
+                            <div v-if="previewState === 'idle'" class="text-slate-600 flex flex-col items-center">
+                                <i class="fa-brands fa-codepen text-6xl mb-4 opacity-30"></i>
+                                <p class="text-sm font-medium tracking-wide">等待运行前向模型进行快速推理</p>
+                            </div>
+                            
+                            <!-- 推理中 -->
+                            <div v-if="previewState === 'processing'" class="absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center z-10 text-orange-400">
+                                <i class="fa-solid fa-circle-notch fa-spin text-5xl mb-4"></i>
+                                <p class="font-mono tracking-widest uppercase text-sm">Inferencing Fast Model...</p>
+                            </div>
+
+                            <!-- 预览结果 -->
+                            <div v-if="previewState === 'finished'" class="w-full h-full relative cursor-move animate-[fadeIn_0.5s_ease-in]">
+                                <img src="https://images.unsplash.com/photo-1618424181497-157f25b6ce50?auto=format&fit=crop&q=80&w=1000" class="w-full h-full object-cover mix-blend-screen opacity-90 filter contrast-125" alt="3d splat">
+                                <!-- 坐标系 -->
+                                <div class="absolute bottom-6 left-6 w-12 h-12 pointer-events-none opacity-60">
+                                    <div class="absolute bottom-0 left-0 w-8 h-1 bg-red-500 rounded-r"></div>
+                                    <div class="absolute bottom-0 left-0 w-1 h-8 bg-green-500 rounded-t"></div>
+                                    <div class="absolute bottom-0 left-0 w-6 h-1 bg-blue-500 transform -rotate-45 origin-bottom-left"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 智能检测提示 (黄框) -->
+                        <div v-if="previewState === 'finished'" class="absolute bottom-6 left-1/2 transform -translate-x-1/2 w-11/12 glass-panel border-amber-200/50 rounded-xl p-4 shadow-2xl z-30 animate-[fadeIn_0.5s_ease-out]">
+                            <div class="flex items-start">
+                                <div class="bg-amber-100 text-amber-600 p-2.5 rounded-full mr-4 shrink-0 shadow-sm">
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <h4 class="font-bold text-slate-800 text-sm">系统覆盖评估评估分析</h4>
+                                    <p class="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                                        基于前向模型结果，当前视角覆盖率约 <strong class="text-blue-600">82%</strong>。检测到目标物体<span class="text-red-500 font-bold">右后方（背光面）</span>点云稀疏存在伪影。
+                                    </p>
+                                    <div class="mt-2 text-xs font-semibold text-slate-500 bg-slate-50/80 p-2 rounded border border-slate-100">
+                                        💡 建议：在左侧点击“补传图片”，拍摄 3-5 张背部细节后再次更新预览，可显著提升精细重建质量。
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= 3. 实时流式扫描 (Realtime) ================= -->
+                <div v-if="currentPage === 'realtime'" class="h-full flex flex-col gap-4 animate-[fadeIn_0.3s_ease-out]">
+                    <!-- 工具栏 -->
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex justify-between items-center shrink-0">
+                        <div class="flex items-center space-x-6">
+                            <div class="flex items-center text-red-500 font-bold tracking-wider text-sm bg-red-50 px-3 py-1.5 rounded-lg border border-red-100">
+                                <div class="w-2.5 h-2.5 bg-red-500 rounded-full mr-2 animate-pulse"></div>
+                                LIVE REC
+                            </div>
+                            <span class="text-xs font-mono bg-slate-100 px-3 py-1.5 rounded-lg text-slate-600 font-bold border border-slate-200">FPS: 30 | BITRATE: 12.5 Mbps</span>
+                        </div>
+                        <div class="flex space-x-3">
+                            <button class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 transition font-medium shadow-sm">
+                                <i class="fa-solid fa-rotate-right mr-1"></i> 清除重拍
+                            </button>
+                            <button @click="startTrainingTask('流式模型_02')" class="px-5 py-2.5 bg-gradient-to-r from-teal-500 to-emerald-500 text-white font-bold rounded-xl hover:opacity-90 transition shadow-lg shadow-teal-500/30">
+                                <i class="fa-solid fa-check mr-1"></i> 停止并进行精细建模
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 双屏对比区 -->
+                    <div class="flex-1 flex gap-4 overflow-hidden">
+                        <!-- 左：摄像头实况 -->
+                        <div class="w-1/2 bg-black rounded-2xl overflow-hidden relative shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] border border-slate-800 flex items-center justify-center">
+                            <div class="absolute inset-0 camera-overlay pointer-events-none z-10"></div>
+                            <div class="absolute top-4 left-4 z-20 text-white/70 font-mono text-xs bg-black/40 px-2 py-1 rounded backdrop-blur border border-white/10">CAM_01 // RGB_FEED</div>
+                            <div class="absolute inset-[20%] border border-white/20 pointer-events-none z-10 flex items-center justify-center rounded-3xl">
+                                <i class="fa-solid fa-crosshairs text-white/30 text-4xl"></i>
+                            </div>
+                            <img src="https://images.unsplash.com/photo-1542204165-65bf26472b9b?auto=format&fit=crop&q=80&w=800" class="w-full h-full object-cover opacity-80" alt="camera feed">
+                        </div>
+
+                        <!-- 右：3D 实时流生成 -->
+                        <div class="w-1/2 bg-[#0f172a] splat-bg rounded-2xl overflow-hidden relative shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] border border-slate-800">
+                            <div class="absolute top-4 left-4 z-20 text-teal-400 font-mono text-xs bg-black/40 px-2 py-1 rounded backdrop-blur border border-teal-500/30 flex items-center">
+                                <i class="fa-solid fa-bolt mr-1.5"></i> REALTIME_SPLAT
+                            </div>
+                            <div class="w-full h-full flex items-center justify-center relative">
+                                <img src="https://images.unsplash.com/photo-1542204165-65bf26472b9b?auto=format&fit=crop&q=80&w=800" class="w-full h-full object-cover mix-blend-screen opacity-70 scale-110 filter blur-[1.5px] contrast-150 saturate-150" alt="3d splat">
+                                <!-- 扫描线动画 -->
+                                <div class="absolute inset-0 bg-gradient-to-b from-transparent via-teal-400/10 to-transparent h-[30%] animate-[scan_2s_linear_infinite] pointer-events-none"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= 4. 项目管理大厅 (Projects) ================= -->
+                <div v-if="currentPage === 'projects'" class="h-full flex flex-col animate-[fadeIn_0.3s_ease-out] max-w-7xl mx-auto w-full">
+                    <!-- 大厅工具栏 -->
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex justify-between items-center mb-6 shrink-0 glass-panel">
+                        <div class="flex items-center">
+                            <span class="text-2xl font-black text-slate-800 mr-4 tracking-wide">项目大厅</span>
+                            <span class="bg-slate-800 text-white px-3 py-1 rounded-full text-xs font-bold shadow-md">{{ projects.length }} PROJ</span>
+                        </div>
+                        <div class="flex space-x-4 items-center">
+                            <div class="relative group">
+                                <i class="fa-solid fa-search absolute left-3.5 top-3 text-slate-400 text-sm group-focus-within:text-blue-500 transition-colors"></i>
+                                <input v-model="searchQuery" type="text" placeholder="检索项目名称..." class="pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 transition-all">
+                            </div>
+                            <select v-model="filterStatus" class="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none cursor-pointer font-medium text-slate-600 hover:bg-slate-100 transition">
+                                <option value="all">全景视图</option>
+                                <option value="completed">已完成</option>
+                                <option value="training">训练节点中</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 网格卡片 -->
+                    <div class="flex-1 overflow-y-auto pb-6">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 px-1">
+                            <div v-for="proj in filteredProjects" :key="proj.id" class="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300 overflow-hidden group cursor-pointer flex flex-col" @click="handleProjectClick(proj)">
+                                
+                                <div class="h-44 relative overflow-hidden bg-slate-900">
+                                    <img :src="proj.thumb" class="w-full h-full object-cover group-hover:scale-110 group-hover:opacity-80 transition-all duration-700">
+                                    
+                                    <!-- 训练状态遮罩 -->
+                                    <div v-if="proj.status === 'training'" class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm flex flex-col justify-center items-center p-6">
+                                        <div class="relative w-12 h-12 flex items-center justify-center mb-3">
+                                            <svg class="animate-spin text-blue-500 w-full h-full" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                            <i class="fa-solid fa-cube absolute text-white/50 text-xs"></i>
+                                        </div>
+                                        <div class="w-full bg-slate-700/50 rounded-full h-1.5 overflow-hidden">
+                                            <div class="bg-gradient-to-r from-blue-400 to-indigo-500 h-1.5 rounded-full transition-all duration-300" :style="{width: proj.progress + '%'}"></div>
+                                        </div>
+                                        <span class="text-white text-[11px] mt-2 font-mono tracking-wider">{{ proj.progress }}% | ETA {{ proj.eta }}</span>
+                                    </div>
+                                    
+                                    <!-- 完成状态角标 -->
+                                    <div v-if="proj.status === 'completed'" class="absolute top-3 right-3 bg-white/90 text-slate-800 text-[10px] font-bold px-2.5 py-1 rounded-full backdrop-blur shadow-sm flex items-center">
+                                        <div class="w-1.5 h-1.5 bg-green-500 rounded-full mr-1.5"></div> READY
+                                    </div>
+                                </div>
+
+                                <div class="p-5 flex-1 flex flex-col justify-between bg-white relative">
+                                    <div>
+                                        <h3 class="font-bold text-slate-800 text-lg truncate group-hover:text-blue-600 transition-colors">{{ proj.name }}</h3>
+                                        <div class="flex items-center text-xs text-slate-400 mt-2 font-mono">
+                                            <i class="fa-regular fa-clock mr-1"></i> {{ proj.date }}
+                                            <span class="mx-2 text-slate-300">|</span>
+                                            <i class="fa-solid fa-database mr-1"></i> {{ proj.size }}
+                                        </div>
+                                    </div>
+                                    <div class="mt-4 flex justify-between items-center text-sm border-t border-slate-100 pt-4">
+                                        <span class="bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold">ID: {{ proj.id }}</span>
+                                        <div v-if="proj.status === 'completed'" class="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                                            <i class="fa-solid fa-arrow-right -rotate-45"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= 5. 分屏项目详情 (Project Detail) ================= -->
+                <!-- 注意：此处采用绝对定位铺满主区域，实现沉浸式效果 -->
+                <div v-if="currentPage === 'project-detail'" class="absolute inset-0 bg-white flex flex-col z-40 animate-[fadeIn_0.3s_ease-out]">
+                    
+                    <!-- 顶部详情工具栏 -->
+                    <div class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 shadow-sm z-20">
+                        <div class="flex items-center">
+                            <button @click="currentPage = 'projects'" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 mr-4 transition"><i class="fa-solid fa-arrow-left"></i></button>
+                            <h2 class="text-xl font-bold text-slate-800">{{ currentViewProject?.name }}</h2>
+                            <span class="ml-4 bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-1 rounded text-xs font-mono font-bold">30,000 Iterations</span>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <button @click="showToast('分享链接已复制到剪贴板！')" class="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm hover:bg-slate-50 hover:text-blue-600 transition font-medium flex items-center shadow-sm">
+                                <i class="fa-solid fa-link mr-2"></i> 分享模型
+                            </button>
+                            <button @click="showToast('PLY 点云文件开始导出，请稍候...')" class="px-4 py-2 bg-slate-800 text-white rounded-xl text-sm hover:bg-black transition font-medium shadow-md shadow-slate-400/20 flex items-center">
+                                <i class="fa-solid fa-download mr-2"></i> 导出 PLY
+                            </button>
+                            <div class="w-px h-6 bg-slate-200 mx-2"></div>
+                            <!-- 删除按钮 -->
+                            <button @click="deleteCurrentProject" class="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-50 hover:text-red-600 rounded-xl transition border border-transparent hover:border-red-100 group" title="删除项目">
+                                <i class="fa-solid fa-trash-can group-hover:scale-110 transition-transform"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 下方左右分屏工作区 -->
+                    <div class="flex-1 flex overflow-hidden bg-slate-100 relative">
+                        
+                        <!-- 左侧：沉浸式 3D 渲染画布 -->
+                        <div class="flex-1 relative splat-bg shadow-[inset_0_0_50px_rgba(0,0,0,0.5)]">
+                            <!-- 画布左上工具条 -->
+                            <div class="absolute top-4 left-4 glass-panel-dark text-slate-300 p-1.5 rounded-xl flex flex-col space-y-1 z-10 text-lg">
+                                <button class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 hover:text-white transition"><i class="fa-solid fa-camera"></i></button>
+                                <button class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 hover:text-white transition"><i class="fa-solid fa-crop-simple"></i></button>
+                                <button class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 hover:text-white transition"><i class="fa-solid fa-gear"></i></button>
+                            </div>
+
+                            <img :src="currentViewProject?.thumb" class="w-full h-full object-cover mix-blend-screen opacity-90 cursor-move filter contrast-125">
+                            
+                            <!-- 左下角渲染指标 -->
+                            <div class="absolute bottom-6 left-6 glass-panel-dark text-white/90 p-4 rounded-2xl text-xs font-mono border border-white/10 shadow-2xl backdrop-blur-xl">
+                                <div class="text-green-400 font-bold mb-3 flex items-center"><div class="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></div>VIEWPORT RENDER</div>
+                                <div class="grid grid-cols-2 gap-x-8 gap-y-2 opacity-80">
+                                    <p><span class="text-slate-400">FPS</span> <span class="float-right text-white">60.2</span></p>
+                                    <p><span class="text-slate-400">Points</span> <span class="float-right text-white">1,245K</span></p>
+                                    <p><span class="text-slate-400">Resolution</span> <span class="float-right text-white">1080p</span></p>
+                                    <p><span class="text-slate-400">SH Degree</span> <span class="float-right text-white">3</span></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 右侧：数据与详情侧边栏 -->
+                        <div class="w-96 bg-white border-l border-slate-200 flex flex-col z-20 shadow-[-10px_0_20px_rgba(0,0,0,0.03)] relative overflow-hidden">
+                            <!-- Tabs -->
+                            <div class="flex p-2 bg-slate-50 border-b border-slate-200 shrink-0 space-x-1">
+                                <button @click="detailTab = 'info'" :class="['flex-1 py-2 text-sm font-bold rounded-xl transition-all', detailTab === 'info' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100']">模型参数</button>
+                                <button @click="detailTab = 'data'" :class="['flex-1 py-2 text-sm font-bold rounded-xl transition-all flex items-center justify-center', detailTab === 'data' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100']">
+                                    源数据集 <span class="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded ml-1.5 font-mono">{{ currentViewProject?.dataset?.length || 0 }}</span>
+                                </button>
+                            </div>
+
+                            <!-- Tab 内容：Info -->
+                            <div v-if="detailTab === 'info'" class="p-6 overflow-y-auto flex-1 bg-white">
+                                <div class="space-y-6">
+                                    <div>
+                                        <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">基本属性</h4>
+                                        <div class="bg-slate-50 rounded-2xl p-4 space-y-3 text-sm border border-slate-100 shadow-sm">
+                                            <div class="flex justify-between items-center"><span class="text-slate-500"><i class="fa-regular fa-calendar mr-1.5"></i>创建时间</span><span class="font-medium text-slate-700">{{ currentViewProject?.date }}</span></div>
+                                            <div class="flex justify-between items-center"><span class="text-slate-500"><i class="fa-solid fa-hard-drive mr-1.5"></i>项目存储</span><span class="font-medium text-slate-700">{{ currentViewProject?.size }}</span></div>
+                                            <div class="flex justify-between items-center"><span class="text-slate-500"><i class="fa-solid fa-camera-retro mr-1.5"></i>源图数量</span><span class="font-medium text-slate-700">{{ currentViewProject?.dataset?.length || 128 }} 张</span></div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between">
+                                            <span>终端训练日志</span>
+                                            <span class="bg-green-100 text-green-600 px-2 py-0.5 rounded text-[9px] font-bold">SUCCESS</span>
+                                        </h4>
+                                        <div class="bg-slate-900 rounded-2xl p-4 text-[11px] font-mono text-slate-400 leading-relaxed overflow-hidden border border-slate-800 shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]">
+                                            <p class="text-blue-400">> Init SfM... Found 4200 points.</p>
+                                            <p>> Starting Gaussian Splatting Optimization.</p>
+                                            <p class="text-orange-300">> Iter 10k: Running Densify & Prune.</p>
+                                            <p>> Iter 20k: Loss L1 = 0.0824</p>
+                                            <p>> Iter 29k: Loss L1 = 0.0411</p>
+                                            <p class="text-green-400">> Iter 30k: Optimization finished successfully.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tab 内容：Data (图片数据集) -->
+                            <div v-if="detailTab === 'data'" class="flex-1 flex flex-col overflow-hidden bg-slate-50">
+                                <div class="p-4 flex justify-between items-center bg-white border-b border-slate-100 shrink-0">
+                                    <span class="text-sm font-bold text-slate-700">用于训练的图像集</span>
+                                    <button @click="showToast('开始打包下载原始数据ZIP...')" class="text-xs text-blue-600 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-lg hover:bg-blue-100 font-medium transition flex items-center">
+                                        <i class="fa-solid fa-cloud-arrow-down mr-1"></i> 下载全部
+                                    </button>
+                                </div>
+                                <div class="flex-1 overflow-y-auto p-3 grid grid-cols-3 gap-2 align-content-start">
+                                    <!-- 遍历显示数据集图片 -->
+                                    <div v-for="(img, idx) in currentViewProject?.dataset" :key="idx" class="relative group aspect-square rounded-lg overflow-hidden bg-slate-200 border border-slate-200 shadow-sm cursor-zoom-in" @click="openLightbox(img)">
+                                        <img :src="img" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300">
+                                        <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                            <i class="fa-solid fa-eye text-xl"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= 6. 用户中心 (User) ================= -->
+                <div v-if="currentPage === 'user'" class="h-full max-w-4xl mx-auto py-10 animate-[fadeIn_0.3s_ease-out]">
+                    <h2 class="text-3xl font-black text-slate-800 mb-8 tracking-wide">账户与偏好设置</h2>
+                    <div class="grid grid-cols-3 gap-8">
+                        <!-- 左侧：基础信息 -->
+                        <div class="col-span-1 bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col items-center relative overflow-hidden">
+                            <div class="absolute top-0 left-0 right-0 h-24 bg-gradient-to-r from-blue-500 to-indigo-600"></div>
+                            
+                            <div class="relative group cursor-pointer mt-8 mb-4">
+                                <img :src="userInfo.avatar" class="w-24 h-24 rounded-full border-4 border-white object-cover shadow-lg bg-slate-100">
+                                <div class="absolute inset-0 bg-black/50 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-bold">
+                                    <i class="fa-solid fa-camera mr-1"></i> 更换
+                                </div>
+                            </div>
+                            
+                            <input v-model="userInfo.nickname" class="text-xl font-bold text-center bg-transparent border-b border-dashed border-slate-300 focus:border-blue-500 focus:outline-none py-1 mb-2 text-slate-800 w-full">
+                            <span class="text-[11px] text-slate-500 bg-slate-100 px-3 py-1 rounded-full font-bold border border-slate-200">PRO 企业授权账号</span>
+                            
+                            <div class="w-full mt-10 space-y-3">
+                                <button class="w-full flex items-center justify-center p-3 text-red-500 border border-red-200 rounded-xl hover:bg-red-50 transition text-sm font-bold shadow-sm">
+                                    <i class="fa-solid fa-right-from-bracket mr-2"></i> 退出登录
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 右侧：看板与反馈 -->
+                        <div class="col-span-2 flex flex-col gap-8">
+                            <!-- 数据看板 -->
+                            <div class="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 grid grid-cols-3 gap-6">
+                                <div>
+                                    <p class="text-slate-400 text-xs font-bold mb-1 uppercase tracking-widest">完成项目</p>
+                                    <p class="text-3xl font-black text-slate-800">{{ projects.length }} <span class="text-sm font-bold text-slate-400">PROJ</span></p>
+                                </div>
+                                <div>
+                                    <p class="text-slate-400 text-xs font-bold mb-1 uppercase tracking-widest">算力消耗</p>
+                                    <p class="text-3xl font-black text-blue-600">128 <span class="text-sm font-bold text-slate-400">HRS</span></p>
+                                </div>
+                                <div>
+                                    <p class="text-slate-400 text-xs font-bold mb-1 uppercase tracking-widest">存储占用</p>
+                                    <p class="text-3xl font-black text-slate-800">14.2 <span class="text-sm font-bold text-slate-400">GB</span></p>
+                                </div>
+                            </div>
+                            
+                            <!-- 错误反馈 -->
+                            <div class="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex-1 flex flex-col">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center text-lg"><i class="fa-solid fa-bug text-orange-500 mr-2"></i>提交系统反馈</h3>
+                                <textarea class="w-full flex-1 bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none mb-4 transition-all" placeholder="请描述您遇到的问题或建议，如训练卡死、渲染伪影、UI错位等..."></textarea>
+                                <div class="flex justify-end">
+                                    <button @click="showToast('感谢反馈，我们将尽快处理！')" class="bg-slate-800 text-white px-6 py-2.5 rounded-xl text-sm hover:bg-black transition shadow-md font-bold">提交工单</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+
+        <!-- ================= 全局大图预览 (Lightbox) ================= -->
+        <transition name="fade">
+            <div v-if="lightboxImage" class="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center backdrop-blur-md" @click="closeLightbox">
+                <div class="absolute top-0 left-0 right-0 p-6 flex justify-end">
+                    <button class="w-12 h-12 rounded-full bg-white/10 text-white text-2xl hover:bg-white/20 transition-colors flex items-center justify-center backdrop-blur-md border border-white/20" @click="closeLightbox"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <img :src="lightboxImage" class="max-w-[90vw] max-h-[85vh] object-contain shadow-2xl rounded-lg" @click.stop>
+            </div>
+        </transition>
+
+    </div>
+
+    <script>
+        const { createApp, ref, computed } = Vue;
+
+        createApp({
+            setup() {
+                // 默认停留在首页，确保能看到离线/流式入口
+                const currentPage = ref('home'); 
+                
+                // 全局 Toast 提示框
+                const toastMsg = ref('');
+                const showToast = (msg) => {
+                    toastMsg.value = msg;
+                    setTimeout(() => toastMsg.value = '', 3000);
+                };
+
+                // 用户信息
+                const userInfo = ref({
+                    nickname: '研发部 - 李工程师',
+                    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix&backgroundColor=b6e3f4'
+                });
+
+                // ================= 顶栏全局多任务管理器 =================
+                const activeTasks = ref([]);
+                const isTaskDropdownOpen = ref(false);
+                const goToTask = (task) => { 
+                    isTaskDropdownOpen.value = false; 
+                    if (task.type === 'preview') {
+                        currentPage.value = 'upload';
+                    } else {
+                        currentPage.value = 'projects';
+                        filterStatus.value = 'training';
+                    }
+                };
+
+                // ================= 离线上传与极速预览逻辑 =================
+                const files = ref([
+                    { name: 'IMG_01.jpg', thumb: 'https://images.unsplash.com/photo-1542204165-65bf26472b9b?w=400', isAppended: false },
+                    { name: 'IMG_02.jpg', thumb: 'https://images.unsplash.com/photo-1542204642-fbd15893d56e?w=400', isAppended: false },
+                    { name: 'IMG_03.jpg', thumb: 'https://images.unsplash.com/photo-1506744626753-1fa44f24cb43?w=400', isAppended: false }
+                ]);
+                
+                // 模拟补传操作
+                const simulateUpload = () => {
+                    files.value.push({ 
+                        name: `Appended_${Date.now().toString().slice(-4)}.jpg`, 
+                        thumb: 'https://images.unsplash.com/photo-1470813740244-df37b8c1edcb?w=400',
+                        isAppended: true // 补传标记
+                    });
+                };
+
+                const previewState = ref('idle'); // idle -> processing -> finished
+                const isPreviewRunning = computed(() => activeTasks.value.some(t => t.type === 'preview'));
+
+                // 启动极速预览任务
+                const startPreview = () => {
+                    previewState.value = 'processing';
+                    const taskId = Date.now();
+                    const newTask = {
+                        id: taskId,
+                        type: 'preview',
+                        projectName: '当前上传图像组',
+                        desc: '前向模型快速推理',
+                        progress: 0,
+                        eta: '12s'
+                    };
+                    activeTasks.value.push(newTask);
+
+                    const interval = setInterval(() => {
+                        const task = activeTasks.value.find(t => t.id === taskId);
+                        if (task) {
+                            task.progress += 8;
+                            let remain = Math.ceil((100 - task.progress) / 8);
+                            task.eta = `${remain}s`;
+                            
+                            if (task.progress >= 100) {
+                                clearInterval(interval);
+                                previewState.value = 'finished';
+                                activeTasks.value = activeTasks.value.filter(t => t.id !== taskId);
+                            }
+                        } else {
+                            clearInterval(interval);
+                        }
+                    }, 500);
+                };
+
+                // ================= 开始精细训练 & 项目大厅逻辑 =================
+                // 项目大厅数据
+                const searchQuery = ref('');
+                const filterStatus = ref('all');
+                
+                // 项目列表 (带有一些预设的完成数据)
+                const projects = ref([
+                    { 
+                        id: '8092', name: '机甲手办高精扫描', status: 'completed', date: '2023-10-25', size: '450 MB', 
+                        thumb: 'https://images.unsplash.com/photo-1618424181497-157f25b6ce50?w=600&q=80',
+                        dataset: Array(24).fill('').map((_, i) => `https://images.unsplash.com/photo-1542204165-65bf26472b9b?w=300&q=80&sig=${i}`)
+                    },
+                    { 
+                        id: '8091', name: '大疆无人机建筑测绘', status: 'completed', date: '2023-10-24', size: '2.1 GB', 
+                        thumb: 'https://images.unsplash.com/photo-1508614589041-895b88991e3e?w=600&q=80',
+                        dataset: Array(60).fill('').map((_, i) => `https://images.unsplash.com/photo-1485955900006-10f4d324d411?w=300&q=80&sig=${i}`)
+                    },
+                    { id: '8090', name: '人物半身像-测试用', status: 'training', date: '2023-10-22', size: '计算中...', thumb: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=600&q=80', progress: 68, eta: '4m 12s' },
+                    { 
+                        id: '8089', name: '古典石膏像', status: 'completed', date: '2023-10-20', size: '890 MB', 
+                        thumb: 'https://images.unsplash.com/photo-1533613220915-609f661a6fe1?w=600&q=80',
+                        dataset: Array(32).fill('').map((_, i) => `https://images.unsplash.com/photo-1533613220915-609f661a6fe1?w=300&q=80&sig=${i}`)
+                    },
+                ]);
+
+                // 过滤器
+                const filteredProjects = computed(() => {
+                    let result = projects.value;
+                    if (filterStatus.value !== 'all') result = result.filter(p => p.status === filterStatus.value);
+                    if (searchQuery.value.trim() !== '') result = result.filter(p => p.name.toLowerCase().includes(searchQuery.value.toLowerCase()));
+                    return result;
+                });
+
+                // 启动精细训练并在后台执行，同时在项目大厅占位
+                const startTrainingTask = (prefix) => {
+                    const taskId = Date.now();
+                    const newTask = {
+                        id: taskId,
+                        type: 'training',
+                        projectName: `${prefix}_${taskId.toString().slice(-4)}`,
+                        desc: '高精度 3DGS 优化中',
+                        progress: 0,
+                        eta: '15m 00s'
+                    };
+                    activeTasks.value.push(newTask);
+                    
+                    // 压入项目列表作为 "正在训练" 状态卡片
+                    projects.value.unshift({
+                        id: taskId.toString().slice(-4),
+                        name: newTask.projectName,
+                        status: 'training',
+                        date: new Date().toISOString().split('T')[0],
+                        size: '计算中...',
+                        thumb: 'https://images.unsplash.com/photo-1618424181497-157f25b6ce50?w=600&q=80', // 占位图
+                        progress: 0,
+                        eta: newTask.eta,
+                        taskId: taskId,
+                        dataset: files.value.map(f => f.thumb) // 将刚才上传的图片关联过来
+                    });
+
+                    // 自动跳转到大厅
+                    currentPage.value = 'projects';
+                    showToast('精细重建任务已提交至集群后台！');
+
+                    // 模拟训练进度
+                    const interval = setInterval(() => {
+                        const task = activeTasks.value.find(t => t.id === taskId);
+                        const proj = projects.value.find(p => p.taskId === taskId);
+                        
+                        if (task && proj) {
+                            task.progress += 2;
+                            proj.progress = task.progress;
+                            let remain = Math.max(0, 15 - Math.floor(task.progress / 6));
+                            task.eta = `${remain}m 12s`;
+                            proj.eta = task.eta;
+
+                            if (task.progress >= 100) {
+                                clearInterval(interval);
+                                activeTasks.value = activeTasks.value.filter(t => t.id !== taskId);
+                                proj.status = 'completed';
+                                proj.size = '1.2 GB';
+                                showToast(`项目 ${proj.name} 训练完成！`);
+                            }
+                        } else {
+                            clearInterval(interval);
+                        }
+                    }, 1000);
+                };
+
+                // ================= 分屏详情页逻辑 =================
+                const currentViewProject = ref(null);
+                const detailTab = ref('info'); // 'info' 还是 'data'
+
+                const handleProjectClick = (proj) => {
+                    if (proj.status === 'completed') {
+                        currentViewProject.value = proj;
+                        detailTab.value = 'info'; 
+                        currentPage.value = 'project-detail';
+                    }
+                };
+
+                const deleteCurrentProject = () => {
+                    if (confirm(`确定要永久删除项目 "${currentViewProject.value.name}" 吗？此操作无法撤销。`)) {
+                        projects.value = projects.value.filter(p => p.id !== currentViewProject.value.id);
+                        showToast('项目已被成功删除');
+                        currentPage.value = 'projects';
+                    }
+                };
+
+                // ================= 全局 Lightbox =================
+                const lightboxImage = ref(null);
+                const openLightbox = (url) => lightboxImage.value = url;
+                const closeLightbox = () => lightboxImage.value = null;
+
+                return {
+                    currentPage, toastMsg, showToast, userInfo,
+                    activeTasks, isTaskDropdownOpen, goToTask,
+                    
+                    files, simulateUpload, previewState, isPreviewRunning, startPreview,
+                    
+                    projects, searchQuery, filterStatus, filteredProjects, startTrainingTask,
+                    
+                    currentViewProject, detailTab, handleProjectClick, deleteCurrentProject,
+                    
+                    lightboxImage, openLightbox, closeLightbox
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

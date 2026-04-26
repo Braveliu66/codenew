@@ -1,60 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { Camera, FolderKanban, UploadCloud } from "lucide-react";
-import { useEffect, useState } from "react";
-import { api, formatBytes } from "@/lib/api";
-import type { Task } from "@/lib/types";
-import { TaskProgress } from "@/components/TaskProgress";
+import { Camera, Images } from "lucide-react";
 
 export default function HomePage() {
-  const [summary, setSummary] = useState<Record<string, number>>({});
-  const [resources, setResources] = useState<{ gpu?: Record<string, unknown> }>({});
-  const [tasks, setTasks] = useState<Task[]>([]);
-
-  useEffect(() => {
-    void api.projectSummary().then(setSummary).catch(() => undefined);
-    void api.resources().then(setResources).catch(() => setResources({ gpu: { available: false, message: "仅管理员可查看完整资源状态" } }));
-    void api.adminTasks()
-      .then((taskData) => setTasks(taskData.tasks.filter((task) => task.status === "running" || task.status === "queued")))
-      .catch(() => setTasks([]));
-  }, []);
-
-  const activeTask = tasks[0];
-
   return (
-    <div className="page">
-      <header className="page-header">
-        <div>
-          <p className="eyebrow">3D Gaussian Splatting</p>
-          <h1>重建工作台</h1>
-        </div>
-        <div className="actions">
-          <Link className="button" href="/upload"><UploadCloud size={18} />上传素材</Link>
-          <Link className="ghost-button" href="/camera"><Camera size={18} />实时视频</Link>
-        </div>
-      </header>
-
-      <section className="grid four">
-        <div className="panel stat"><span className="muted small">项目数</span><strong>{summary.project_count ?? 0}</strong></div>
-        <div className="panel stat"><span className="muted small">训练中</span><strong>{summary.training_count ?? 0}</strong></div>
-        <div className="panel stat"><span className="muted small">已完成</span><strong>{summary.completed_count ?? 0}</strong></div>
-        <div className="panel stat"><span className="muted small">总占用</span><strong>{formatBytes(summary.total_size_bytes)}</strong></div>
-      </section>
-
-      <section className="grid two">
-        <div className="panel stack">
-          <h2>系统资源</h2>
-          <div className="data-row"><span>CPU</span><strong>可用</strong></div>
-          <div className="data-row"><span>GPU</span><strong>{resources.gpu?.available ? "可用" : "不可用"}</strong></div>
-          <p className="muted small">{String(resources.gpu?.message ?? "Docker/WSL CUDA 环境会显示 GPU 状态。")}</p>
-        </div>
-        <div className="panel stack">
-          <div className="row between">
-            <h2>当前任务</h2>
-            <Link href="/projects" className="ghost-button"><FolderKanban size={16} />项目</Link>
-          </div>
-          <TaskProgress task={activeTask} />
+    <div className="workspace-page home-choice-page">
+      <section className="home-choice">
+        <h1>选择重建工作流</h1>
+        <div className="workflow-grid">
+          <Link className="workflow-card simple" href="/upload">
+            <span className="workflow-icon"><Images size={30} /></span>
+            <h2>离线数据集重建</h2>
+            <p className="muted">上传图片序列或视频，可直接训练，也可先生成极速预览。</p>
+          </Link>
+          <Link className="workflow-card simple" href="/camera">
+            <span className="workflow-icon"><Camera size={30} /></span>
+            <h2>实时流式扫描</h2>
+            <p className="muted">实时相机管线暂未接入，当前页面只显示真实不可用状态。</p>
+          </Link>
         </div>
       </section>
     </div>
