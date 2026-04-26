@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,11 @@ SPARK_REPO = "https://github.com/sparkjsdev/spark.git"
 LITEVGGT_WEIGHT_REPO = "ZhijianShu/LiteVGGT"
 LITEVGGT_WEIGHT_FILE = "te_dict.pt"
 EDGS_LICENSE = "Non-commercial research and personal use (see EDGS LICENSE.txt)"
+EDGS_WHEEL_BASE_URL = "https://huggingface.co/spaces/CompVis/EDGS/resolve/main/wheels"
+EDGS_WHEELS = {
+    "diff_gaussian_rasterization": "diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl",
+    "simple_knn": "simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl",
+}
 
 
 def main() -> int:
@@ -109,9 +115,9 @@ def install_python_runtime(litevggt: Path, edgs: Path) -> None:
     simple_knn = edgs / "submodules" / "gaussian-splatting" / "submodules" / "simple-knn"
     roma = edgs / "submodules" / "RoMa"
     if diff_raster.exists():
-        pip_install(["-e", str(diff_raster)])
+        install_edgs_extension("diff_gaussian_rasterization", diff_raster)
     if simple_knn.exists():
-        pip_install(["-e", str(simple_knn)])
+        install_edgs_extension("simple_knn", simple_knn)
     pip_install(
         [
             "pycolmap",
@@ -129,11 +135,51 @@ def install_python_runtime(litevggt: Path, edgs: Path) -> None:
         ]
     )
     if roma.exists():
-        pip_install(["-e", str(roma)])
+        pip_install(["--no-build-isolation", "-e", str(roma)])
+    pip_install(["numpy==1.26.4"])
+
+
+def install_edgs_extension(package: str, source_path: Path) -> None:
+    mode = os.environ.get("EDGS_EXTENSION_INSTALL_MODE", "auto").strip().lower()
+    if mode not in {"auto", "wheel", "source"}:
+        raise RuntimeError(f"Unsupported EDGS_EXTENSION_INSTALL_MODE={mode!r}; expected auto, wheel, or source")
+
+    wheel = EDGS_WHEELS.get(package)
+    can_use_official_wheel = (
+        wheel is not None
+        and sys.version_info[:2] == (3, 10)
+        and platform.machine() == "x86_64"
+        and sys.platform.startswith("linux")
+    )
+    if mode in {"auto", "wheel"} and can_use_official_wheel:
+        url = f"{EDGS_WHEEL_BASE_URL}/{wheel}"
+        try:
+            pip_install([url])
+            return
+        except subprocess.CalledProcessError:
+            if mode == "wheel":
+                raise
+            print(f"Official EDGS wheel failed for {package}; falling back to local CUDA build.", flush=True)
+    elif mode == "wheel":
+        raise RuntimeError(f"No official EDGS wheel is configured for {package} on this Python/platform")
+
+    compile_edgs_extension(package, source_path)
+
+
+def compile_edgs_extension(package: str, source_path: Path) -> None:
+    if not source_path.exists():
+        raise RuntimeError(f"EDGS extension source is missing for {package}: {source_path}")
+    try:
+        import torch  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(f"Cannot compile {package}: torch must be installed first") from exc
+    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.5;8.6+PTX")
+    os.environ.setdefault("MAX_JOBS", str(max((os.cpu_count() or 2) // 2, 1)))
+    pip_install(["--no-build-isolation", str(source_path)])
 
 
 def pip_install(args: list[str]) -> None:
-    run([sys.executable, "-m", "pip", "install", "--break-system-packages", *args])
+    run([sys.executable, "-m", "pip", "install", *args])
 
 
 def install_spark_runtime(spark: Path) -> None:
