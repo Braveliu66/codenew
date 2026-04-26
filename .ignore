@@ -1,0 +1,10 @@
+.tmp_tests/
+tmp_py_root/
+tmp_py_test/
+__pycache__/
+storage/
+.runtime/
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/tsconfig.tsbuildinfo

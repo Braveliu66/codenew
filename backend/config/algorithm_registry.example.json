@@ -1,0 +1,181 @@
+{
+  "algorithms": [
+    {
+      "name": "LiteVGGT",
+      "repo_url": "https://github.com/GarlicBa/LiteVGGT-repo",
+      "license": "MIT",
+      "commit_hash": null,
+      "weight_source": "https://huggingface.co/ZhijianShu/LiteVGGT/resolve/main/te_dict.pt",
+      "local_path": null,
+      "enabled": false,
+      "notes": "Preview geometry stage. Deployment must clone the official repository and download te_dict.pt before enabling.",
+      "weight_paths": [],
+      "commands": {
+        "run_demo": [
+          "python",
+          "backend/scripts/run_litevggt_preview.py"
+        ]
+      }
+    },
+    {
+      "name": "EDGS",
+      "repo_url": "https://github.com/CompVis/EDGS",
+      "license": "Apache-2.0",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Preview training stage. Runs official train.py against a real 3DGS/COLMAP dataset.",
+      "weight_paths": [],
+      "commands": {
+        "train": [
+          "python",
+          "backend/scripts/run_edgs_preview.py"
+        ]
+      }
+    },
+    {
+      "name": "Spark-SPZ",
+      "repo_url": "https://github.com/sparkjsdev/spark",
+      "license": "MIT",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Real SPZ conversion. Must call a real Spark/SPZ converter; zip placeholders are forbidden.",
+      "weight_paths": [],
+      "commands": {
+        "compress": [
+          "python",
+          "backend/scripts/run_spz_convert.py"
+        ]
+      }
+    },
+    {
+      "name": "FFmpeg",
+      "repo_url": "https://ffmpeg.org/",
+      "license": "LGPL/GPL depending on build configuration",
+      "commit_hash": "system-package",
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Video preview frame extraction. Deployment must install ffmpeg and enable this registry entry.",
+      "weight_paths": [],
+      "source_type": "command",
+      "commands": {
+        "extract_frames": [
+          "python",
+          "backend/scripts/run_ffmpeg_extract.py"
+        ]
+      }
+    },
+    {
+      "name": "Faster-GS",
+      "repo_url": "https://github.com/nerficg-project/faster-gaussian-splatting",
+      "license": "Apache-2.0",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Required one-process host framework. Set a real git checkout, exact commit hash and fine_engine command before enabling.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "FastGS",
+      "repo_url": "https://github.com/fastgs/FastGS",
+      "license": "MIT",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Injected as densify_and_prune callback into Faster-GS.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "Deblurring-3DGS",
+      "repo_url": "https://github.com/benhenryL/Deblurring-3D-Gaussian-Splatting",
+      "license": "Inria 3DGS non-commercial license",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Enabled only when preprocessing detects blurry media.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "3DGS-LM",
+      "repo_url": "https://github.com/lukasHoel/3DGS-LM",
+      "license": "MIT",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Switches optimizer from Adam to LM after 70 percent of iterations.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "MeshSplatting",
+      "repo_url": "https://github.com/meshsplatting/mesh-splatting",
+      "license": "Apache-2.0 with original 3DGS non-commercial constraints",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Runs in the same CUDA context after fine reconstruction when mesh export is requested.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "FreeSplatter",
+      "repo_url": "https://github.com/TencentARC/FreeSplatter",
+      "license": "Apache-2.0 core; check model dependency restrictions",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Required when effective views are below 15 or COLMAP fails.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "LingBot-Map",
+      "repo_url": "https://github.com/Robbyant/lingbot-map",
+      "license": "TBD",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Optional long-video pose correction; not enabled by default because license is unclear.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "MASt3R",
+      "repo_url": "https://github.com/naver/mast3r",
+      "license": "CC BY-NC-SA 4.0",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Used inside optional long-video global optimization.",
+      "weight_paths": [],
+      "commands": {}
+    },
+    {
+      "name": "Pi3",
+      "repo_url": "https://github.com/yyfz/Pi3",
+      "license": "MIT",
+      "commit_hash": null,
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Used inside optional long-video global optimization.",
+      "weight_paths": [],
+      "commands": {}
+    }
+  ]
+}

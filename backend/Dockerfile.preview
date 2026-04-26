@@ -1,0 +1,20 @@
+FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu24.04
+
+WORKDIR /workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv git ffmpeg nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt backend/requirements.txt
+RUN python3 -m pip install --break-system-packages -r backend/requirements.txt
+
+COPY . .
+
+ENV PYTHONPATH=/workspace
+ENV THREE_DGS_STORAGE_ROOT=/workspace/storage
+ENV PYTHONUTF8=1
+ENV PYTHONIOENCODING=utf-8
+
+EXPOSE 8000
+CMD ["python3", "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
