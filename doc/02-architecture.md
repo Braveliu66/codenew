@@ -1,4 +1,4 @@
-# 系统架构设计
+yy# 系统架构设计
 
 ## 1. 总体结构
 
@@ -100,8 +100,8 @@ flowchart LR
 
 | 场景 | 管线 |
 | --- | --- |
-| 图片极速预览 | LiteVGGT → EDGS → `preview.spz` + `preview_lod1.rad` |
-| 视频极速预览 | Stream3R 或 LiteVGGT → `preview.spz` |
+| 图片极速预览 | 默认 LiteVGGT → EDGS → Spark-SPZ；可选 LiteVGGT → Spark-SPZ 粗预览 |
+| 视频极速预览 | LingBot-Map → Spark-SPZ |
 | 实时摄像头 | Stream3R 流式更新 → `preview_live.spz` |
 | 精细重建 | Faster-GS + FastGS + Deblurring-3DGS + 3DGS-LM |
 | 稀疏视角 | FreeSplatter 初始化 → 精细合成引擎 |
@@ -137,14 +137,16 @@ viewer          Spark 2.0
 
 ## 7. 当前实现同步
 
-- API 服务、preview worker、PostgreSQL、Redis、MinIO、frontend 已在 Compose 中拆分为独立服务。
+- API 服务、image-worker、video-worker、PostgreSQL、Redis、MinIO、frontend 已在 Compose 中拆分为独立服务。
 - API 使用 SQLAlchemy 2.x 模型和 Alembic 迁移；启动时 seed 默认管理员和算法登记记录。
-- preview worker 与 API 共享同一数据库、对象存储和算法 registry，但只有 worker 执行真实算法命令。
+- image-worker 与 video-worker 分别使用独立镜像和算法 registry，避免 LingBot-Map 依赖污染 LiteVGGT/EDGS 环境。
 - 本机 CPU-only 开发环境允许 SQLite/本地对象存储适配用于测试，但 Docker/WSL 目标架构以 PostgreSQL、Redis、MinIO 为准。
 
 ## 8. GPU 预览链路同步
 
-- Docker 预览镜像使用 Python 3.12 和 CUDA devel，在构建期自动安装 LiteVGGT、EDGS、Spark；模型权重优先从项目根目录 `model-cache/<model-name>/...` 复制，缺失时才远端下载。
-- 预览链路为 `FFmpeg(视频)` -> `LiteVGGT COLMAP export` -> `EDGS train` -> `Spark-SPZ convert`。
-- 输入数据帧数由后端控制：至少 8 帧/张，最多 800 帧/张；前端 90 FPS 只表示查看器实时渲染目标。
+- 图片预览镜像使用 Python 3.12 和 CUDA devel，在构建期自动安装 LiteVGGT、EDGS、Spark；模型权重优先从项目根目录 `model-cache/<model-name>/...` 复制，缺失时才远端下载。
+- 视频预览镜像使用 Python 3.10、CUDA 12.8、PyTorch 2.8.0 cu128 和 LingBot-Map；权重固定为 `model-cache/lingbot-map/lingbot-map-long.pt`，缺失时构建/预检失败。
+- 图片链路默认为 `LiteVGGT COLMAP export` -> `EDGS train` -> `Spark-SPZ convert`，可通过 `preview_pipeline=litevggt_spark` 跳过 EDGS。
+- 视频链路为 `LingBot-Map` -> `Spark-SPZ convert`，不再默认走 FFmpeg -> LiteVGGT -> EDGS。
+- 图片项目至少 1 张图片；视频项目按完整时长均匀采样，默认不固定 16 帧或 1 fps，可用 `VIDEO_PREVIEW_TARGET_FRAMES` 或 `frame_sample_fps` 控制资源上限。
 - 前端 Spark Viewer 通过 npm 依赖随 Next.js 构建打包，运行时只访问后端 API 和对象存储产物 URL。

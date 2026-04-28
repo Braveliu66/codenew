@@ -128,6 +128,9 @@ export interface RuntimePreflight {
   python: Record<string, unknown>;
   gpu: Record<string, unknown>;
   torch: Record<string, unknown>;
+  transformer_engine: Record<string, unknown>;
+  edgs_cuda_extensions?: Record<string, unknown>;
+  lingbot_runtime?: Record<string, unknown>;
   algorithms: RuntimePreflightAlgorithm[];
   errors: string[];
   warnings: string[];

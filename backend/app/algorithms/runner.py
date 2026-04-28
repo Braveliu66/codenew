@@ -43,12 +43,21 @@ class RealAlgorithmCommandRunner:
                 text=True,
                 timeout=timeout_seconds,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            stdout = self._text_output(exc.stdout)
+            stderr = self._text_output(exc.stderr)
+            stdout_path, stderr_path = self._write_command_logs(result_path, stdout, stderr)
             return None, AlgorithmIssue(
                 code=AlgorithmErrorCode.ALGORITHM_COMMAND_FAILED,
                 message=f"{entry.name} command '{command_key}' timed out",
                 algorithm=entry.name,
-                details={"timeout_seconds": timeout_seconds},
+                details={
+                    "timeout_seconds": timeout_seconds,
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                    "stdout": stdout,
+                    "stderr": stderr,
+                },
             )
         except FileNotFoundError as exc:
             return None, AlgorithmIssue(
@@ -58,6 +67,13 @@ class RealAlgorithmCommandRunner:
                 details={"error": str(exc)},
             )
 
+        stdout_path, stderr_path = self._write_command_logs(result_path, completed.stdout, completed.stderr)
+        log_details = {
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
         if completed.returncode != 0:
             return None, AlgorithmIssue(
                 code=AlgorithmErrorCode.ALGORITHM_COMMAND_FAILED,
@@ -65,8 +81,7 @@ class RealAlgorithmCommandRunner:
                 algorithm=entry.name,
                 details={
                     "returncode": completed.returncode,
-                    "stdout": completed.stdout[-4000:],
-                    "stderr": completed.stderr[-4000:],
+                    **log_details,
                 },
             )
 
@@ -89,13 +104,33 @@ class RealAlgorithmCommandRunner:
             )
 
         result["_runner"] = {
-            "stdout_tail": completed.stdout[-4000:],
-            "stderr_tail": completed.stderr[-4000:],
+            **log_details,
         }
         artifact_issue = self._validate_artifacts(entry.name, result)
         if artifact_issue:
-            return None, artifact_issue
+            return None, AlgorithmIssue(
+                code=artifact_issue.code,
+                message=artifact_issue.message,
+                algorithm=artifact_issue.algorithm,
+                stage=artifact_issue.stage,
+                details={**artifact_issue.details, **log_details},
+            )
         return result, None
+
+    def _write_command_logs(self, result_path: Path, stdout: str, stderr: str) -> tuple[Path, Path]:
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path = result_path.with_name(result_path.stem.replace(".result", "") + ".stdout.log")
+        stderr_path = result_path.with_name(result_path.stem.replace(".result", "") + ".stderr.log")
+        stdout_path.write_text(stdout, encoding="utf-8", errors="replace")
+        stderr_path.write_text(stderr, encoding="utf-8", errors="replace")
+        return stdout_path, stderr_path
+
+    def _text_output(self, value: str | bytes | None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return value
 
     def _validate_artifacts(
         self,

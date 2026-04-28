@@ -4,7 +4,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from backend.app.core.config import get_settings
 
@@ -29,27 +29,35 @@ class PreviewEngine:
         self,
         registry: AlgorithmRegistry,
         runner: RealAlgorithmCommandRunner | None = None,
+        progress_callback: Callable[[str, int], None] | None = None,
     ) -> None:
         self.registry = registry
         self.checker = AlgorithmEnvironmentChecker(registry)
         self.runner = runner or RealAlgorithmCommandRunner()
+        self.progress_callback = progress_callback
 
     def build_plan(self, request: PreviewTaskRequest) -> PreviewPipelinePlan:
         settings = get_settings()
-        min_frames = settings.preview_min_input_frames
+        image_min_frames = 1
+        video_min_frames = settings.preview_min_input_frames
         max_frames = settings.preview_max_input_frames
         requested_max = int(request.options.get("max_preview_frames") or max_frames)
-        requested_max = min(max(requested_max, min_frames), max_frames)
+        requested_max = min(max(requested_max, image_min_frames), max_frames)
         stages: list[PipelineStage] = []
         skipped: list[SkippedStage] = []
         requirements: list[AlgorithmRequirement] = []
 
         if request.input_type == "video":
+            pipeline = str(request.options.get("preview_pipeline") or "lingbot_map_spark")
+            if pipeline != "lingbot_map_spark":
+                raise ValueError("Video preview currently supports only preview_pipeline='lingbot_map_spark'")
+            video_requested_max = min(max(requested_max, video_min_frames), max_frames)
             stage = PipelineStage(
-                name="video_frame_extraction",
-                algorithm="FFmpeg",
-                role="video_to_preview_frames",
-                reason="video preview uses sampled frames before LiteVGGT and EDGS",
+                name="video_lingbot_map",
+                algorithm="LingBot-Map",
+                role="streaming_video_geometry_preview",
+                reason="video preview uses LingBot-Map for streaming reconstruction before Spark conversion",
+                requires_weights=True,
             )
             stages.append(stage)
             requirements.append(
@@ -58,17 +66,54 @@ class PreviewEngine:
                     stage=stage.name,
                     role=stage.role,
                     requires_command=True,
-                    command_key="extract_frames",
+                    requires_weights=True,
+                    command_key="run_preview",
                 )
             )
-        else:
-            skipped.append(
-                SkippedStage(
-                    name="video_frame_extraction",
-                    reason="image preview uses uploaded image files directly",
+            spz_stage = PipelineStage(
+                name="spz_conversion",
+                algorithm="Spark-SPZ",
+                role="real_spz_conversion",
+                reason="viewer must load a real SPZ artifact, not a zip placeholder",
+            )
+            stages.append(spz_stage)
+            requirements.append(
+                AlgorithmRequirement(
+                    name=spz_stage.algorithm,
+                    stage=spz_stage.name,
+                    role=spz_stage.role,
+                    requires_command=True,
+                    command_key="compress",
                 )
+            )
+            return PreviewPipelinePlan(
+                task_id=request.task_id,
+                project_id=request.project_id,
+                stages=stages,
+                skipped_stages=skipped,
+                requirements=requirements,
+                pipeline_options={
+                    "input_type": request.input_type,
+                    "preview_pipeline": pipeline,
+                    "frame_sample_fps": request.options.get("frame_sample_fps"),
+                    "target_frame_count": request.options.get("target_frame_count"),
+                    "min_preview_frames": video_min_frames,
+                    "max_preview_frames": video_requested_max,
+                    "preview_frame_cap": max_frames,
+                    "video_preview_mode": str(request.options.get("video_preview_mode") or settings.video_preview_mode),
+                    "require_real_spz": True,
+                },
             )
 
+        pipeline = str(request.options.get("preview_pipeline") or settings.preview_default_pipeline or "edgs")
+        if pipeline not in {"edgs", "litevggt_spark"}:
+            raise ValueError("Image preview_pipeline must be 'edgs' or 'litevggt_spark'")
+        skipped.append(
+            SkippedStage(
+                name="video_frame_extraction",
+                reason="image preview uses uploaded image files directly",
+            )
+        )
         for stage in (
             PipelineStage(
                 name="geometry_litevggt",
@@ -77,11 +122,22 @@ class PreviewEngine:
                 reason="LiteVGGT provides fast camera and point cloud initialization",
                 requires_weights=True,
             ),
-            PipelineStage(
-                name="training_edgs",
-                algorithm="EDGS",
-                role="dense_gaussian_preview_training",
-                reason="EDGS trains the preview Gaussian model from the LiteVGGT dataset",
+            *(
+                [
+                    PipelineStage(
+                        name="training_edgs",
+                        algorithm="EDGS",
+                        role="dense_gaussian_preview_training",
+                        reason="EDGS trains the preview Gaussian model from the LiteVGGT dataset",
+                    )
+                ]
+                if pipeline == "edgs"
+                else [
+                    SkippedStage(
+                        name="training_edgs",
+                        reason="litevggt_spark preview converts LiteVGGT point cloud directly to SPZ",
+                    )
+                ]
             ),
             PipelineStage(
                 name="spz_conversion",
@@ -90,6 +146,9 @@ class PreviewEngine:
                 reason="viewer must load a real SPZ artifact, not a zip placeholder",
             ),
         ):
+            if isinstance(stage, SkippedStage):
+                skipped.append(stage)
+                continue
             stages.append(stage)
             requirements.append(
                 AlgorithmRequirement(
@@ -114,8 +173,9 @@ class PreviewEngine:
             requirements=requirements,
             pipeline_options={
                 "input_type": request.input_type,
+                "preview_pipeline": pipeline,
                 "frame_sample_fps": int(request.options.get("frame_sample_fps", 2)),
-                "min_preview_frames": min_frames,
+                "min_preview_frames": image_min_frames,
                 "max_preview_frames": requested_max,
                 "preview_frame_cap": max_frames,
                 "edgs_epochs": int(request.options.get("edgs_epochs") or settings.preview_default_edgs_epochs),
@@ -188,61 +248,72 @@ class PreviewEngine:
                 f"Preview input path does not exist: {source_path}",
             )
 
-        image_dir = source_path
         if request.input_type == "video":
-            frame_result = self._run_stage(
+            self._emit_progress("video_lingbot_map", 35)
+            lingbot_result = self._run_stage(
                 request=request,
                 plan=plan,
-                stage_name="video_frame_extraction",
-                algorithm="FFmpeg",
-                command_key="extract_frames",
+                stage_name="video_lingbot_map",
+                algorithm="LingBot-Map",
+                command_key="run_preview",
                 spec={
                     "video_path": str(source_path),
-                    "output_dir": str(request.work_dir / "frames"),
-                    "frame_sample_fps": plan.pipeline_options["frame_sample_fps"],
+                    "output_dir": str(request.work_dir / "lingbot"),
+                    "video_preview_mode": plan.pipeline_options["video_preview_mode"],
+                    "target_frame_count": plan.pipeline_options.get("target_frame_count"),
+                    "frame_sample_fps": plan.pipeline_options.get("frame_sample_fps"),
                     "max_preview_frames": plan.pipeline_options["max_preview_frames"],
+                    "min_preview_frames": plan.pipeline_options["min_preview_frames"],
+                    "mask_sky": bool(request.options.get("mask_sky", False)),
                 },
             )
-            if frame_result[1]:
-                return self._failed_from_issue(request, plan, frame_result[1], logs)
-            stage_results["video_frame_extraction"] = frame_result[0] or {}
-            logs.extend(frame_result[2])
-            image_dir_value = self._artifact_path(stage_results["video_frame_extraction"], "frame_dir")
-            if image_dir_value is None:
+            if lingbot_result[1]:
+                return self._failed_from_issue(request, plan, lingbot_result[1], logs)
+            stage_results["video_lingbot_map"] = lingbot_result[0] or {}
+            logs.extend(lingbot_result[2])
+            self._emit_progress("video_lingbot_map", 90)
+            preview_ply = (
+                self._artifact_path(stage_results["video_lingbot_map"], "preview_ply")
+                or self._artifact_path(stage_results["video_lingbot_map"], "point_cloud")
+                or self._artifact_path(stage_results["video_lingbot_map"], "output_ply")
+            )
+            if preview_ply is None:
                 return self._failed(
                     request,
                     plan,
-                    AlgorithmErrorCode.VIDEO_FRAME_EXTRACTION_FAILED,
-                    "FFmpeg stage did not report a frame_dir artifact",
+                    AlgorithmErrorCode.PREVIEW_ARTIFACT_INVALID,
+                    "LingBot-Map stage did not report a preview_ply, point_cloud, or output_ply artifact",
                     logs=logs,
                 )
-            image_dir = Path(image_dir_value)
-            frame_count = int((stage_results["video_frame_extraction"].get("metrics") or {}).get("frame_count") or 0)
-            if frame_count < int(plan.pipeline_options["min_preview_frames"]):
-                return self._failed(
-                    request,
-                    plan,
-                    AlgorithmErrorCode.INVALID_TASK_OPTIONS,
-                    (
-                        "Video preview requires at least "
-                        f"{plan.pipeline_options['min_preview_frames']} extracted frames; got {frame_count}"
-                    ),
-                    logs=logs,
-                )
-        else:
-            image_count = len([path for path in image_dir.iterdir() if path.is_file()])
-            if image_count < int(plan.pipeline_options["min_preview_frames"]):
-                return self._failed(
-                    request,
-                    plan,
-                    AlgorithmErrorCode.INVALID_TASK_OPTIONS,
-                    (
-                        "Image preview requires at least "
-                        f"{plan.pipeline_options['min_preview_frames']} images; got {image_count}"
-                    ),
-                    logs=logs,
-                )
+            return self._convert_spz_and_finish(
+                request=request,
+                plan=plan,
+                stage_results=stage_results,
+                logs=logs,
+                preview_ply=preview_ply,
+                metrics_extra={
+                    "pipeline": "lingbot_map_spark",
+                    "preview_pipeline": "lingbot_map_spark",
+                    "geometry_algorithm": "LingBot-Map",
+                    **(stage_results["video_lingbot_map"].get("metrics") or {}),
+                },
+            )
 
+        image_dir = source_path
+        image_count = len([path for path in image_dir.iterdir() if path.is_file()])
+        if image_count < int(plan.pipeline_options["min_preview_frames"]):
+            return self._failed(
+                request,
+                plan,
+                AlgorithmErrorCode.INVALID_TASK_OPTIONS,
+                (
+                    "Image preview requires at least "
+                    f"{plan.pipeline_options['min_preview_frames']} image; got {image_count}"
+                ),
+                logs=logs,
+            )
+
+        self._emit_progress("geometry_litevggt", 35)
         litevggt_result = self._run_stage(
             request=request,
             plan=plan,
@@ -261,6 +332,7 @@ class PreviewEngine:
             return self._failed_from_issue(request, plan, litevggt_result[1], logs)
         stage_results["geometry_litevggt"] = litevggt_result[0] or {}
         logs.extend(litevggt_result[2])
+        self._emit_progress("geometry_litevggt", 55)
 
         dataset_dir = (
             self._artifact_path(stage_results["geometry_litevggt"], "dataset_dir")
@@ -276,38 +348,88 @@ class PreviewEngine:
                 logs=logs,
             )
 
-        edgs_result = self._run_stage(
+        if plan.pipeline_options["preview_pipeline"] == "edgs":
+            self._emit_progress("training_edgs", 60)
+            edgs_result = self._run_stage(
+                request=request,
+                plan=plan,
+                stage_name="training_edgs",
+                algorithm="EDGS",
+                command_key="train",
+                spec={
+                    "source_path": dataset_dir,
+                    "output_dir": str(request.work_dir / "edgs"),
+                    "edgs_epochs": plan.pipeline_options["edgs_epochs"],
+                },
+            )
+            if edgs_result[1]:
+                return self._failed_from_issue(request, plan, edgs_result[1], logs)
+            stage_results["training_edgs"] = edgs_result[0] or {}
+            logs.extend(edgs_result[2])
+            self._emit_progress("training_edgs", 90)
+
+            preview_ply = (
+                self._artifact_path(stage_results["training_edgs"], "preview_ply")
+                or self._artifact_path(stage_results["training_edgs"], "trained_ply")
+                or self._artifact_path(stage_results["training_edgs"], "point_cloud")
+            )
+            if preview_ply is None:
+                return self._failed(
+                    request,
+                    plan,
+                    AlgorithmErrorCode.PREVIEW_ARTIFACT_INVALID,
+                    "EDGS stage did not report a preview_ply, trained_ply, or point_cloud artifact",
+                    logs=logs,
+                )
+            metrics_extra = {
+                "pipeline": "litevggt_edgs_spz",
+                "preview_pipeline": "edgs",
+                "geometry_algorithm": "LiteVGGT",
+                "geometry_selection_reason": "image preview default uses LiteVGGT geometry followed by EDGS training",
+                "selected_frame_count": image_count,
+            }
+        else:
+            preview_ply = (
+                self._artifact_path(stage_results["geometry_litevggt"], "preview_ply")
+                or self._artifact_path(stage_results["geometry_litevggt"], "point_cloud")
+            )
+            if preview_ply is None:
+                return self._failed(
+                    request,
+                    plan,
+                    AlgorithmErrorCode.PREVIEW_ARTIFACT_INVALID,
+                    "LiteVGGT direct preview did not report a preview_ply or point_cloud artifact",
+                    logs=logs,
+                )
+            metrics_extra = {
+                "pipeline": "litevggt_spark",
+                "preview_pipeline": "litevggt_spark",
+                "geometry_algorithm": "LiteVGGT",
+                "geometry_selection_reason": "direct preview converts LiteVGGT point cloud to SPZ without EDGS training",
+                "selected_frame_count": image_count,
+            }
+
+        return self._convert_spz_and_finish(
             request=request,
             plan=plan,
-            stage_name="training_edgs",
-            algorithm="EDGS",
-            command_key="train",
-            spec={
-                "source_path": dataset_dir,
-                "output_dir": str(request.work_dir / "edgs"),
-                "edgs_epochs": plan.pipeline_options["edgs_epochs"],
-            },
+            stage_results=stage_results,
+            logs=logs,
+            preview_ply=preview_ply,
+            metrics_extra=metrics_extra,
         )
-        if edgs_result[1]:
-            return self._failed_from_issue(request, plan, edgs_result[1], logs)
-        stage_results["training_edgs"] = edgs_result[0] or {}
-        logs.extend(edgs_result[2])
 
-        preview_ply = (
-            self._artifact_path(stage_results["training_edgs"], "preview_ply")
-            or self._artifact_path(stage_results["training_edgs"], "trained_ply")
-            or self._artifact_path(stage_results["training_edgs"], "point_cloud")
-        )
-        if preview_ply is None:
-            return self._failed(
-                request,
-                plan,
-                AlgorithmErrorCode.PREVIEW_ARTIFACT_INVALID,
-                "EDGS stage did not report a preview_ply, trained_ply, or point_cloud artifact",
-                logs=logs,
-            )
-
+    def _convert_spz_and_finish(
+        self,
+        *,
+        request: PreviewTaskRequest,
+        plan: PreviewPipelinePlan,
+        stage_results: dict[str, dict[str, Any]],
+        logs: list[str],
+        preview_ply: str,
+        metrics_extra: dict[str, Any],
+    ) -> TaskExecutionResult:
         spz_path = request.work_dir / "preview" / "preview.spz"
+        self._emit_progress("spz_conversion", 92)
         spz_result = self._run_stage(
             request=request,
             plan=plan,
@@ -323,6 +445,7 @@ class PreviewEngine:
             return self._failed_from_issue(request, plan, spz_result[1], logs)
         stage_results["spz_conversion"] = spz_result[0] or {}
         logs.extend(spz_result[2])
+        self._emit_progress("spz_conversion", 98)
 
         preview_spz = self._artifact_path(stage_results["spz_conversion"], "preview_spz")
         if preview_spz is None:
@@ -346,9 +469,9 @@ class PreviewEngine:
                 }
             ],
             metrics={
-                "pipeline": "litevggt_edgs_spz",
                 "input_type": request.input_type,
                 "stages": list(stage_results.keys()),
+                **metrics_extra,
             },
             logs=logs,
             plan=plan.to_dict(),
@@ -406,16 +529,32 @@ class PreviewEngine:
         log_entries = [str(spec_path), str(result_path)]
         if result and isinstance(result.get("_runner"), dict):
             runner_info = result["_runner"]
-            if runner_info.get("stdout_tail"):
-                log_entries.append(f"{algorithm} stdout: {runner_info['stdout_tail']}")
-            if runner_info.get("stderr_tail"):
-                log_entries.append(f"{algorithm} stderr: {runner_info['stderr_tail']}")
+            if runner_info.get("stdout_path") or runner_info.get("stderr_path"):
+                log_entries.append(
+                    f"{algorithm} log files:\n"
+                    f"stdout: {runner_info.get('stdout_path') or '-'}\n"
+                    f"stderr: {runner_info.get('stderr_path') or '-'}"
+                )
+            if runner_info.get("stdout"):
+                log_entries.append(f"{algorithm} stdout:\n{runner_info['stdout']}")
+            if runner_info.get("stderr"):
+                log_entries.append(f"{algorithm} stderr:\n{runner_info['stderr']}")
         if issue and issue.details:
+            if issue.details.get("stdout_path") or issue.details.get("stderr_path"):
+                log_entries.append(
+                    f"{algorithm} log files:\n"
+                    f"stdout: {issue.details.get('stdout_path') or '-'}\n"
+                    f"stderr: {issue.details.get('stderr_path') or '-'}"
+                )
             if issue.details.get("stdout"):
-                log_entries.append(f"{algorithm} stdout: {issue.details['stdout']}")
+                log_entries.append(f"{algorithm} stdout:\n{issue.details['stdout']}")
             if issue.details.get("stderr"):
-                log_entries.append(f"{algorithm} stderr: {issue.details['stderr']}")
+                log_entries.append(f"{algorithm} stderr:\n{issue.details['stderr']}")
         return result, issue, log_entries
+
+    def _emit_progress(self, stage: str, progress: int) -> None:
+        if self.progress_callback:
+            self.progress_callback(stage, progress)
 
     def _algorithm_context(self) -> dict[str, dict[str, Any]]:
         return {

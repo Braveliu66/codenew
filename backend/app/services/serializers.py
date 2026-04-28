@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.app.core.config import get_settings
 from backend.app.db import models
 
 
@@ -58,18 +59,19 @@ def media_to_dict(asset: models.MediaAsset) -> dict[str, Any]:
 
 
 def task_to_dict(task: models.Task) -> dict[str, Any]:
+    progress, eta_seconds = task_progress_snapshot(task)
     return {
         "id": task.id,
         "project_id": task.project_id,
         "type": task.type,
         "status": task.status,
         "priority": task.priority,
-        "progress": task.progress,
+        "progress": progress,
         "worker_id": task.worker_id,
         "options": task.options or {},
         "metrics": task.metrics or {},
         "current_stage": task.current_stage or "",
-        "eta_seconds": task.eta_seconds,
+        "eta_seconds": eta_seconds,
         "error_code": task.error_code,
         "error_message": task.error_message,
         "logs": task.logs or [],
@@ -77,6 +79,83 @@ def task_to_dict(task: models.Task) -> dict[str, Any]:
         "started_at": iso_datetime(task.started_at),
         "finished_at": iso_datetime(task.finished_at),
     }
+
+
+def task_progress_snapshot(task: models.Task) -> tuple[int, int | None]:
+    base_progress = clamp_int(task.progress or 0, 0, 100)
+    if task.status in {"succeeded", "failed"}:
+        return 100, 0
+    if task.status == "canceled":
+        return base_progress, 0
+    if task.status != "running" or task.started_at is None:
+        return base_progress, task.eta_seconds
+
+    started_at = task.started_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    elapsed = max(0, int((datetime.now(timezone.utc) - started_at.astimezone(timezone.utc)).total_seconds()))
+    total = estimated_task_duration_seconds(task)
+    if total <= 0:
+        return base_progress, task.eta_seconds
+
+    start, end = task_progress_range(task)
+    computed_progress = start + int((min(elapsed, total) / total) * max(end - start, 1))
+    progress = clamp_int(max(base_progress, computed_progress), 0, end)
+    eta_seconds = None if elapsed >= total else max(0, total - elapsed)
+    return progress, eta_seconds
+
+
+def task_progress_range(task: models.Task) -> tuple[int, int]:
+    if task.type != "preview":
+        return (15, 95)
+    stage = task.current_stage or ""
+    if stage == "materializing_inputs":
+        return (5, 15)
+    if stage == "video_frame_extraction":
+        return (20, 30)
+    if stage == "video_lingbot_map":
+        return (35, 90)
+    if stage == "geometry_litevggt":
+        return (35, 55)
+    if stage == "training_edgs":
+        return (60, 94)
+    if stage == "spz_conversion":
+        return (92, 98)
+    return (15, 94)
+
+
+def estimated_task_duration_seconds(task: models.Task) -> int:
+    options = task.options or {}
+    explicit = positive_int(options.get("estimated_duration_seconds"))
+    if explicit is not None:
+        return explicit
+    timeout = positive_int(options.get("timeout_seconds"))
+    if task.type == "preview":
+        settings = get_settings()
+        timeout = timeout or 300
+        frame_policy = options.get("input_frame_policy") if isinstance(options.get("input_frame_policy"), dict) else {}
+        selected_frames = positive_int(frame_policy.get("selected_input_frames")) or positive_int(options.get("max_preview_frames"))
+        selected_frames = selected_frames or settings.preview_min_input_frames
+        edgs_epochs = positive_int(options.get("edgs_epochs")) or settings.preview_default_edgs_epochs
+        frame_factor = min(max(selected_frames, settings.preview_min_input_frames), settings.preview_max_input_frames) / max(settings.preview_max_input_frames, 1)
+        epoch_factor = edgs_epochs / max(settings.preview_default_edgs_epochs, 1)
+        estimated = int(45 + (90 * frame_factor) + (60 * epoch_factor))
+        return min(max(estimated, 60), timeout)
+    if task.type == "fine":
+        return timeout or 7200
+    return timeout or 300
+
+
+def positive_int(value: object) -> int | None:
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def clamp_int(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
 
 
 def artifact_to_dict(artifact: models.Artifact) -> dict[str, Any]:

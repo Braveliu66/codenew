@@ -10,7 +10,7 @@ import type { MediaAsset, Project, Task, ViewerConfig } from "@/lib/types";
 import { SplatViewer } from "@/components/SplatViewer";
 import { TaskProgress } from "@/components/TaskProgress";
 
-const MIN_INPUT_FRAMES = 8;
+const MIN_INPUT_FRAMES = 1;
 const MAX_INPUT_FRAMES = 800;
 const MEDIA_LIST_THRESHOLD = 18;
 
@@ -19,6 +19,7 @@ export default function UploadPage() {
   const thumbsRef = useRef<Record<string, string>>({});
   const [name, setName] = useState("新建重建项目");
   const [inputType, setInputType] = useState<Project["input_type"]>("images");
+  const [previewPipeline, setPreviewPipeline] = useState<"edgs" | "litevggt_spark">("edgs");
   const [tags, setTags] = useState("preview, research");
   const [project, setProject] = useState<Project | null>(null);
   const [media, setMedia] = useState<MediaAsset[]>([]);
@@ -120,7 +121,10 @@ export default function UploadPage() {
     setBusy(true);
     setError(null);
     try {
-      const next = await api.startPreview(project.id);
+      const options = inputType === "images"
+        ? { preview_pipeline: previewPipeline }
+        : { preview_pipeline: "lingbot_map_spark" };
+      const next = await api.startPreview(project.id, options);
       rememberTaskId(next.id);
       setTask(next);
       setViewer(null);
@@ -188,6 +192,22 @@ export default function UploadPage() {
             <div className="field">
               <label>标签</label>
               <input className="input" value={tags} onChange={(event) => setTags(event.target.value)} disabled={Boolean(project)} />
+            </div>
+            <div className="field">
+              <label>预览管线</label>
+              {inputType === "images" ? (
+                <select
+                  className="select"
+                  value={previewPipeline}
+                  onChange={(event) => setPreviewPipeline(event.target.value as "edgs" | "litevggt_spark")}
+                  disabled={Boolean(task && isActiveTask(task))}
+                >
+                  <option value="edgs">LiteVGGT + EDGS + Spark-SPZ</option>
+                  <option value="litevggt_spark">LiteVGGT + Spark-SPZ 粗预览</option>
+                </select>
+              ) : (
+                <input className="input" value="LingBot-Map + Spark-SPZ" disabled />
+              )}
             </div>
 
             <label

@@ -1,6 +1,6 @@
 # 当前实现进度
 
-更新时间：2026-04-26
+更新时间：2026-04-28
 
 ## 已完成
 
@@ -8,7 +8,7 @@
 2. 已实现用户名/密码登录、注册、JWT Bearer 鉴权、user/admin 角色和普通用户项目隔离。
 3. 上传接口写入对象存储适配层；Docker 环境使用 MinIO，本机测试可使用本地文件后端。
 4. 预览任务由 API 创建 DB task 并推送 Redis 队列，真实算法只在独立 worker 中运行。
-5. worker 会物化真实上传文件，按输入帧数规则采样图片或抽取视频帧，调用 LiteVGGT -> EDGS -> Spark-SPZ。
+5. worker 会物化真实上传文件，图片默认调用 LiteVGGT -> EDGS -> Spark-SPZ，视频默认调用 LingBot-Map -> Spark-SPZ。
 6. Docker 预览镜像改为 Python 3.12 + CUDA devel，并在构建期自动 clone 算法仓库、优先使用本地 `model-cache/litevggt/te_dict.pt`、安装依赖、生成算法 registry。
 7. registry seed 已改为 upsert，Docker 生成的算法 commit、路径、权重和命令会同步到数据库。
 8. 新增 `GET /api/admin/runtime/preflight` 和 `python -m backend.scripts.check_preview_runtime`，用于检查 GPU、torch、算法仓库、权重和命令。
@@ -16,12 +16,16 @@
 10. 管理页增加 Runtime Preflight 面板，上传页显示预览输入帧数规则。
 11. 模型权重缓存规则已固定：后续新增模型都先放入 `model-cache/<model-name>/...`，构建脚本命中本地缓存后再复制进运行镜像，缺失时才远端下载。
 12. LiteVGGT 运行环境改为显式安装 `transformer-engine[pytorch]`，不在脚本里模拟或降级替代算法依赖。
+13. 预览队列拆分为 `preview_image_tasks` 和 `preview_video_tasks`，API 按项目输入类型路由到对应 worker。
+14. 新增独立 LingBot-Map 视频预览镜像，使用 Python 3.10、CUDA 12.8、PyTorch 2.8.0 cu128，权重固定读取 `model-cache/lingbot-map/lingbot-map-long.pt`。
 
 ## 当前预览规则
 
 - 输入数据帧数和前端渲染 FPS 是两个独立概念。
-- 图片项目至少 8 张图片；超过 800 张时均匀采样 800 张参与预览。
-- 视频项目抽帧后至少 8 帧；最多抽取 800 帧。
+- 图片项目至少 1 张图片；默认 `preview_pipeline=edgs`，超过 800 张时均匀采样 800 张参与预览。
+- 图片可选 `preview_pipeline=litevggt_spark`，直接将 LiteVGGT 点云转为 Spark-SPZ，不运行 EDGS。
+- 视频项目默认且推荐 `preview_pipeline=lingbot_map_spark`；LingBot 未配置时明确失败，不回退旧 LiteVGGT/EDGS 管线。
+- 视频默认按完整时长均匀采样，不固定 16 帧或 1 fps；可用 `VIDEO_PREVIEW_TARGET_FRAMES` 或 `frame_sample_fps` 控制采样数量。
 - 前端查看 3DGS 模型时目标实时渲染为 90 FPS，优先保证速度，再提升清晰度。
 - 任务失败时不创建假 `preview.spz` artifact。
 
@@ -34,11 +38,12 @@
 ## 待真实环境验证
 
 1. 在 Docker/WSL GPU 环境执行完整 `docker compose -f deploy/docker-compose.preview.yml build`。
-2. 执行 `docker compose -f deploy/docker-compose.preview.yml run --rm worker python -m backend.scripts.check_preview_runtime`。
-3. 用至少 8 张真实图片验证 LiteVGGT -> EDGS -> Spark-SPZ 成功路径。
-4. 用真实视频验证 ffmpeg 抽帧、少帧失败路径和 800 帧上限。
-5. 在前端确认 Spark Viewer 能加载非空 `preview.spz` 并自动调节 FPS/清晰度。
-6. 确认构建日志显示 `Using cached LiteVGGT weight`，并确认 `transformer_engine` 在 backend/worker 镜像内可导入。
+2. 执行 `docker compose -f deploy/docker-compose.preview.yml run --rm image-worker python -m backend.scripts.check_preview_runtime`。
+3. 执行 `docker compose -f deploy/docker-compose.preview.yml run --rm video-worker python -m backend.scripts.check_preview_runtime`，确认 LingBot 权重和 CUDA 栈可用。
+4. 用 1、3、8、50 张真实图片验证 LiteVGGT -> EDGS -> Spark-SPZ 和 `litevggt_spark` 成功/真实失败路径。
+5. 用真实视频验证 LingBot-Map 全时长抽帧覆盖开头、中段、结尾，并输出非空 `preview.spz`。
+6. 在前端确认 Spark Viewer 能加载非空 `preview.spz` 并自动调节 FPS/清晰度。
+7. 确认构建日志显示 `Using cached LiteVGGT weight`，并确认 `transformer_engine` 在 image-worker 镜像内可导入。
 
 ## 当前限制
 

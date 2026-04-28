@@ -331,6 +331,6 @@ Worker 返回结果：
 ## 7. Runtime Preflight 与预览输入规则
 
 - 管理员接口 `GET /api/admin/runtime/preflight` 返回 Python、CUDA、torch、GPU、算法仓库、权重、命令和 commit 检查结果。
-- 图片预览任务创建前要求至少 8 张图片；超过 800 张时任务 options 中记录采样上限。
-- 视频预览任务创建前要求已上传视频；抽帧后少于 8 帧时 worker 标记失败且不创建 artifact。
+- 图片预览任务创建前要求至少 1 张图片；超过 800 张时任务 options 中记录采样上限。
+- 视频预览任务创建前要求已上传视频；video-worker 使用 LingBot-Map 按完整时长采样，少于配置最小帧数时标记失败且不创建 artifact。
 - `Task.options.input_frame_policy` 记录 `min_input_frames`、`max_input_frames`、`available_input_frames` 和 `selected_input_frames`。

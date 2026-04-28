@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+from importlib import metadata
 from pathlib import Path
 
 
@@ -18,6 +19,7 @@ LITEVGGT_WEIGHT_REPO = "ZhijianShu/LiteVGGT"
 LITEVGGT_WEIGHT_FILE = "te_dict.pt"
 EDGS_LICENSE = "Non-commercial research and personal use (see EDGS LICENSE.txt)"
 EDGS_WHEEL_BASE_URL = "https://huggingface.co/spaces/CompVis/EDGS/resolve/main/wheels"
+DEFAULT_TRANSFORMER_ENGINE_VERSION = "2.14.0"
 EDGS_WHEELS = {
     "diff_gaussian_rasterization": "diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl",
     "simple_knn": "simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl",
@@ -118,7 +120,7 @@ def resolve_litevggt_weight(models_root: Path, weight_cache_root: Path) -> Path:
 def install_python_runtime(litevggt: Path, edgs: Path) -> None:
     pip_install(["--upgrade", "pip", "setuptools", "wheel"])
     pip_install(["-r", str(litevggt / "requirements.txt")])
-    pip_install(["transformer-engine[pytorch]"])
+    install_transformer_engine()
     diff_raster = edgs / "submodules" / "gaussian-splatting" / "submodules" / "diff-gaussian-rasterization"
     simple_knn = edgs / "submodules" / "gaussian-splatting" / "submodules" / "simple-knn"
     roma = edgs / "submodules" / "RoMa"
@@ -147,8 +149,42 @@ def install_python_runtime(litevggt: Path, edgs: Path) -> None:
     pip_install(["numpy==1.26.4"])
 
 
+def install_transformer_engine() -> None:
+    version = os.environ.get("TRANSFORMER_ENGINE_VERSION", DEFAULT_TRANSFORMER_ENGINE_VERSION).strip()
+    if not version:
+        raise RuntimeError("TRANSFORMER_ENGINE_VERSION cannot be empty")
+    pip_uninstall(["transformer-engine-cu13"])
+    pip_install([f"transformer-engine=={version}", f"transformer-engine-cu12=={version}"])
+    pip_install(["--no-build-isolation", f"transformer-engine-torch=={version}"])
+    validate_transformer_engine_packages(version)
+
+
+def validate_transformer_engine_packages(version: str) -> None:
+    expected = {
+        "transformer-engine": version,
+        "transformer-engine-cu12": version,
+        "transformer-engine-torch": version,
+    }
+    installed = {name: installed_package_version(name) for name in expected}
+    mismatched = {name: found for name, found in installed.items() if found != expected[name]}
+    cu13_version = installed_package_version("transformer-engine-cu13")
+    if mismatched or cu13_version is not None:
+        raise RuntimeError(
+            "Transformer Engine package mismatch: "
+            f"expected={expected}, installed={installed}, transformer-engine-cu13={cu13_version}"
+        )
+    print(f"Transformer Engine packages pinned to CUDA 12 version {version}", flush=True)
+
+
+def installed_package_version(name: str) -> str | None:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
 def install_edgs_extension(package: str, source_path: Path) -> None:
-    mode = os.environ.get("EDGS_EXTENSION_INSTALL_MODE", "auto").strip().lower()
+    mode = os.environ.get("EDGS_EXTENSION_INSTALL_MODE", "source").strip().lower()
     if mode not in {"auto", "wheel", "source"}:
         raise RuntimeError(f"Unsupported EDGS_EXTENSION_INSTALL_MODE={mode!r}; expected auto, wheel, or source")
 
@@ -183,11 +219,16 @@ def compile_edgs_extension(package: str, source_path: Path) -> None:
         raise RuntimeError(f"Cannot compile {package}: torch must be installed first") from exc
     os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.5;8.6+PTX")
     os.environ.setdefault("MAX_JOBS", str(max((os.cpu_count() or 2) // 2, 1)))
+    pip_uninstall([package])
     pip_install(["--no-build-isolation", str(source_path)])
 
 
 def pip_install(args: list[str]) -> None:
     run([sys.executable, "-m", "pip", "install", *args])
+
+
+def pip_uninstall(args: list[str]) -> None:
+    run([sys.executable, "-m", "pip", "uninstall", "-y", *args], check=False)
 
 
 def install_spark_runtime(spark: Path) -> None:
@@ -266,6 +307,18 @@ def write_registry(
             "weight_paths": [],
             "source_type": "command",
             "commands": {"extract_frames": ["python3", str(script_dir / "run_ffmpeg_extract.py")]},
+        },
+        {
+            "name": "LingBot-Map",
+            "repo_url": "https://github.com/Robbyant/lingbot-map",
+            "license": "Apache-2.0",
+            "commit_hash": None,
+            "weight_source": "local model-cache/lingbot-map/lingbot-map-long.pt",
+            "local_path": None,
+            "enabled": False,
+            "notes": "Video preview algorithm; enabled by the separate LingBot-Map worker image.",
+            "weight_paths": ["/model-cache/lingbot-map/lingbot-map-long.pt"],
+            "commands": {"run_preview": ["python3", str(script_dir / "run_lingbot_map_preview.py")]},
         },
     ]
     registry_output.write_text(json.dumps({"algorithms": algorithms}, ensure_ascii=False, indent=2), encoding="utf-8")

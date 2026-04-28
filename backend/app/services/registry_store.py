@@ -21,13 +21,16 @@ def seed_algorithm_registry(db: Session, registry_path: Path | None = None) -> N
     for item in data.get("algorithms", []):
         name = str(item["name"])
         existing = db.scalar(select(models.AlgorithmRegistryRecord).where(models.AlgorithmRegistryRecord.name == name))
+        enabled = bool(item.get("enabled", False))
         if existing:
+            if existing.enabled and not enabled:
+                continue
             existing.repo_url = item.get("repo_url")
             existing.license = item.get("license")
             existing.commit_hash = item.get("commit_hash")
             existing.weight_source = item.get("weight_source")
             existing.local_path = item.get("local_path")
-            existing.enabled = bool(item.get("enabled", False))
+            existing.enabled = enabled
             existing.notes = item.get("notes")
             existing.commands = item.get("commands") or {}
             existing.weight_paths = item.get("weight_paths") or []
@@ -41,7 +44,7 @@ def seed_algorithm_registry(db: Session, registry_path: Path | None = None) -> N
                     commit_hash=item.get("commit_hash"),
                     weight_source=item.get("weight_source"),
                     local_path=item.get("local_path"),
-                    enabled=bool(item.get("enabled", False)),
+                    enabled=enabled,
                     notes=item.get("notes"),
                     commands=item.get("commands") or {},
                     weight_paths=item.get("weight_paths") or [],

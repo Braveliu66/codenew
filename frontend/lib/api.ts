@@ -65,7 +65,7 @@ export const api = {
     request<AuthResponse>("/api/auth/login", { method: "POST", body: JSON.stringify(payload), auth: false }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   me: () => request<User>("/api/me"),
-  resources: () => request<{ cpu: Record<string, unknown>; gpu: Record<string, unknown>; workers?: Record<string, unknown> }>("/api/admin/system/resources"),
+  resources: () => request<{ cpu: Record<string, unknown>; memory: Record<string, unknown>; gpu: Record<string, unknown>; workers?: Record<string, unknown> }>("/api/admin/system/resources"),
   algorithms: () => request<{ algorithms: AlgorithmEntry[] }>("/api/algorithms", { auth: false }),
   adminAlgorithms: () => request<{ algorithms: AlgorithmEntry[] }>("/api/admin/algorithms"),
   runtimePreflight: () => request<RuntimePreflight>("/api/admin/runtime/preflight"),
@@ -84,8 +84,8 @@ export const api = {
   },
   media: (projectId: string) => request<{ media: MediaAsset[] }>(`/api/projects/${projectId}/media`),
   mediaStats: (projectId: string) => request<Record<string, unknown>>(`/api/projects/${projectId}/media/stats`),
-  startPreview: (projectId: string) =>
-    request<Task>(`/api/projects/${projectId}/tasks/preview`, { method: "POST", body: JSON.stringify({ options: {} }) }),
+  startPreview: (projectId: string, options: Record<string, unknown> = {}) =>
+    request<Task>(`/api/projects/${projectId}/tasks/preview`, { method: "POST", body: JSON.stringify({ options }) }),
   startFine: (projectId: string) =>
     request<Task>(`/api/projects/${projectId}/tasks/fine`, { method: "POST", body: JSON.stringify({ options: {} }) }),
   task: (id: string) => request<Task>(`/api/tasks/${id}`),

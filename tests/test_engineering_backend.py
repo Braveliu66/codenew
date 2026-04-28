@@ -24,10 +24,10 @@ TEST_TMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
 
 class FakeQueue:
     def __init__(self) -> None:
-        self.enqueued: list[str] = []
+        self.enqueued: list[tuple[str, str]] = []
 
-    def enqueue_preview(self, task_id: str) -> None:
-        self.enqueued.append(task_id)
+    def enqueue_preview(self, task_id: str, input_type: str = "images") -> None:
+        self.enqueued.append((task_id, input_type))
 
 
 def configure_test_database(name: str) -> Path:
@@ -113,7 +113,7 @@ class EngineeringBackendTests(unittest.TestCase):
             )
             self.assertEqual(task.status_code, 200, task.text)
             self.assertEqual(task.json()["status"], "queued")
-            self.assertEqual(fake_queue.enqueued, [task.json()["id"]])
+            self.assertEqual(fake_queue.enqueued, [(task.json()["id"], "images")])
 
             artifacts = client.get(
                 f"/api/projects/{project['id']}/artifacts",
@@ -122,7 +122,7 @@ class EngineeringBackendTests(unittest.TestCase):
             self.assertEqual(artifacts.status_code, 200)
             self.assertEqual(artifacts.json()["artifacts"], [])
 
-    def test_preview_task_rejects_too_few_images_before_queue(self) -> None:
+    def test_preview_task_allows_fewer_than_eight_images(self) -> None:
         fake_queue = FakeQueue()
         with self.make_client(fake_queue) as client:
             token = self.register(client, "few-images")
@@ -145,9 +145,35 @@ class EngineeringBackendTests(unittest.TestCase):
                 headers={"Authorization": f"Bearer {token}"},
             )
 
-            self.assertEqual(task.status_code, 400)
-            self.assertIn("at least 8", task.text)
-            self.assertEqual(fake_queue.enqueued, [])
+            self.assertEqual(task.status_code, 200, task.text)
+            self.assertEqual(task.json()["status"], "queued")
+            self.assertEqual(fake_queue.enqueued, [(task.json()["id"], "images")])
+
+    def test_video_preview_task_uses_video_queue_and_lingbot_pipeline(self) -> None:
+        fake_queue = FakeQueue()
+        with self.make_client(fake_queue) as client:
+            token = self.register(client, "video-preview")
+            project = client.post(
+                "/api/projects",
+                json={"name": "video", "input_type": "video", "tags": []},
+                headers={"Authorization": f"Bearer {token}"},
+            ).json()
+            upload = client.post(
+                f"/api/projects/{project['id']}/media",
+                files={"file": ("clip.mp4", b"real video bytes", "video/mp4")},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(upload.status_code, 200, upload.text)
+
+            task = client.post(
+                f"/api/projects/{project['id']}/tasks/preview",
+                json={"options": {}},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+            self.assertEqual(task.status_code, 200, task.text)
+            self.assertEqual(task.json()["options"]["preview_pipeline"], "lingbot_map_spark")
+            self.assertEqual(fake_queue.enqueued, [(task.json()["id"], "video")])
 
     def test_preview_task_caps_selected_image_frames_at_800(self) -> None:
         with SessionLocal() as db:

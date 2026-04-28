@@ -23,6 +23,10 @@ class Settings:
     preview_min_input_frames: int
     preview_max_input_frames: int
     preview_default_edgs_epochs: int
+    preview_default_pipeline: str
+    lingbot_model_path: Path
+    video_preview_mode: str
+    video_preview_target_frames: int | None
 
 
 def get_settings() -> Settings:
@@ -49,5 +53,13 @@ def get_settings() -> Settings:
         preview_min_input_frames=int(os.environ.get("PREVIEW_MIN_INPUT_FRAMES", "8")),
         preview_max_input_frames=int(os.environ.get("PREVIEW_MAX_INPUT_FRAMES", "800")),
         preview_default_edgs_epochs=int(os.environ.get("PREVIEW_DEFAULT_EDGS_EPOCHS", "3000")),
+        preview_default_pipeline=os.environ.get("PREVIEW_DEFAULT_PIPELINE", "edgs"),
+        lingbot_model_path=Path(os.environ.get("LINGBOT_MODEL_PATH", "/model-cache/lingbot-map/lingbot-map-long.pt")),
+        video_preview_mode=os.environ.get("VIDEO_PREVIEW_MODE", "windowed"),
+        video_preview_target_frames=(
+            int(os.environ["VIDEO_PREVIEW_TARGET_FRAMES"])
+            if os.environ.get("VIDEO_PREVIEW_TARGET_FRAMES")
+            else None
+        ),
     )
 

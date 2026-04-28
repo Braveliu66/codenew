@@ -144,14 +144,21 @@
     {
       "name": "LingBot-Map",
       "repo_url": "https://github.com/Robbyant/lingbot-map",
-      "license": "TBD",
+      "license": "Apache-2.0",
       "commit_hash": null,
-      "weight_source": null,
+      "weight_source": "local model-cache/lingbot-map/lingbot-map-long.pt",
       "local_path": null,
       "enabled": false,
-      "notes": "Optional long-video pose correction; not enabled by default because license is unclear.",
-      "weight_paths": [],
-      "commands": {}
+      "notes": "Video preview worker algorithm. Enable only in the LingBot-Map Docker runtime where local_path, commit_hash, and weight_paths are generated.",
+      "weight_paths": [
+        "/model-cache/lingbot-map/lingbot-map-long.pt"
+      ],
+      "commands": {
+        "run_preview": [
+          "python",
+          "backend/scripts/run_lingbot_map_preview.py"
+        ]
+      }
     },
     {
       "name": "MASt3R",

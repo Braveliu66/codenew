@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import struct
 import sys
 from pathlib import Path
 
@@ -42,10 +43,8 @@ def main() -> int:
     min_frames = max(int(spec.get("min_input_frames") or 8), 1)
     max_frames = max(int(spec.get("max_input_frames") or 800), min_frames)
     image_paths = select_evenly(sorted_images(image_dir), max_frames)
-    aligned_count = (len(image_paths) // 8) * 8
-    if aligned_count < min_frames:
-        raise RuntimeError(f"LiteVGGT requires at least {min_frames} images after 8-frame alignment; got {aligned_count}")
-    image_paths = image_paths[:aligned_count]
+    if len(image_paths) < min_frames:
+        raise RuntimeError(f"LiteVGGT requires at least {min_frames} image; got {len(image_paths)}")
 
     result = run_litevggt(
         repo_path=repo_path,
@@ -63,6 +62,7 @@ def main() -> int:
                 {"kind": "output_dir", "path": str(output_dir.resolve())},
                 {"kind": "dataset_dir", "path": str(dataset_dir.resolve())},
                 {"kind": "colmap_dir", "path": str(sparse_dir.resolve())},
+                {"kind": "preview_ply", "path": str(result["ply_path"].resolve())},
                 {"kind": "point_cloud", "path": str(result["ply_path"].resolve())},
             ],
             "metrics": {
@@ -96,6 +96,21 @@ def run_litevggt(
     device = os.environ.get("LITEVGGT_DEVICE", "cuda:0")
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available for LiteVGGT")
+    device_index = torch.device(device).index or 0
+    print(
+        json.dumps(
+            {
+                "event": "litevggt_cuda",
+                "device": device,
+                "device_name": torch.cuda.get_device_name(device_index),
+                "torch_version": torch.__version__,
+                "torch_cuda_version": torch.version.cuda,
+                "input_frames": len(image_paths),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
 
     model = VGGT().to(device)
@@ -166,6 +181,18 @@ def run_litevggt(
     try_convert_colmap_to_binary(sparse_dir)
     ply_path = output_dir / "recon.ply"
     write_point_cloud_ply(ply_path, points, colors)
+    if torch.cuda.is_available():
+        print(
+            json.dumps(
+                {
+                    "event": "litevggt_cuda_memory",
+                    "max_memory_allocated_mb": round(torch.cuda.max_memory_allocated(device_index) / 1024 / 1024, 1),
+                    "max_memory_reserved_mb": round(torch.cuda.max_memory_reserved(device_index) / 1024 / 1024, 1),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
     return {"ply_path": ply_path, "point_count": len(points), "width": width, "height": height}
 
 
@@ -277,16 +304,31 @@ def try_convert_colmap_to_binary(sparse_dir: Path) -> None:
 
 def write_point_cloud_ply(path: Path, points: np.ndarray, colors: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as file:
-        file.write("ply\nformat ascii 1.0\n")
-        file.write(f"element vertex {len(points)}\n")
-        file.write("property float x\nproperty float y\nproperty float z\n")
-        file.write("property uchar red\nproperty uchar green\nproperty uchar blue\n")
-        file.write("end_header\n")
+    with path.open("wb") as file:
+        header = (
+            "ply\n"
+            "format binary_little_endian 1.0\n"
+            f"element vertex {len(points)}\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            "property uchar red\n"
+            "property uchar green\n"
+            "property uchar blue\n"
+            "end_header\n"
+        )
+        file.write(header.encode("ascii"))
         for point, color in zip(points, colors):
             file.write(
-                f"{point[0]:.6f} {point[1]:.6f} {point[2]:.6f} "
-                f"{int(color[0])} {int(color[1])} {int(color[2])}\n"
+                struct.pack(
+                    "<fffBBB",
+                    float(point[0]),
+                    float(point[1]),
+                    float(point[2]),
+                    int(color[0]),
+                    int(color[1]),
+                    int(color[2]),
+                )
             )
 
 

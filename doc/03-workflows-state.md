@@ -70,7 +70,7 @@ sequenceDiagram
     API->>S3: 保存 raw/video
     API->>Q: 创建 preview 任务
     W->>Q: 拉取任务
-    W->>W: Stream3R 或 LiteVGGT 处理视频帧
+    W->>W: LingBot-Map 按完整时长采样并重建点云
     W->>S3: 保存 preview.spz
     API-->>FE: 推送 PREVIEW_READY
     FE->>V: 加载预览模型

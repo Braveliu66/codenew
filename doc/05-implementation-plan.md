@@ -85,7 +85,7 @@
 
 - LiteVGGT 适配器。
 - EDGS 适配器。
-- Stream3R 或 LiteVGGT 视频适配器。
+- LingBot-Map 视频适配器。
 - 真实 `preview.spz` 和 `preview_lod1.rad` 产物上传。
 - 素材质量分析和补拍建议。
 

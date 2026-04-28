@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import importlib
 import shutil
 import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,9 @@ from backend.app.algorithms.registry import AlgorithmRegistry
 
 def build_runtime_preflight(registry: AlgorithmRegistry) -> dict[str, Any]:
     algorithms = [algorithm_status(entry.to_dict()) for entry in registry.list_entries()]
+    transformer_engine = transformer_engine_status()
+    edgs_extensions = edgs_cuda_extension_status()
+    lingbot_runtime = lingbot_runtime_status()
     errors: list[str] = []
     warnings: list[str] = []
     for item in algorithms:
@@ -18,10 +23,19 @@ def build_runtime_preflight(registry: AlgorithmRegistry) -> dict[str, Any]:
             errors.extend(f"{item['name']}: {issue}" for issue in item["issues"])
         if not item["enabled"]:
             warnings.append(f"{item['name']} is disabled")
+    if any(item["name"] == "LiteVGGT" and item["enabled"] for item in algorithms) and not transformer_engine["available"]:
+        errors.append(f"Transformer Engine: {transformer_engine['message']}")
+    if any(item["name"] == "EDGS" and item["enabled"] for item in algorithms) and not edgs_extensions["available"]:
+        errors.extend(f"EDGS CUDA extension: {issue}" for issue in edgs_extensions["issues"])
+    if any(item["name"] == "LingBot-Map" and item["enabled"] for item in algorithms) and not lingbot_runtime["available"]:
+        errors.extend(f"LingBot-Map runtime: {issue}" for issue in lingbot_runtime["issues"])
     return {
         "python": python_status(),
         "gpu": gpu_status(),
         "torch": torch_status(),
+        "transformer_engine": transformer_engine,
+        "edgs_cuda_extensions": edgs_extensions,
+        "lingbot_runtime": lingbot_runtime,
         "algorithms": algorithms,
         "errors": errors,
         "warnings": warnings,
@@ -83,6 +97,69 @@ def torch_status() -> dict[str, Any]:
         "cuda_version": torch.version.cuda,
         "device_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
     }
+
+
+def transformer_engine_status() -> dict[str, Any]:
+    try:
+        import transformer_engine.pytorch  # noqa: F401
+    except ModuleNotFoundError as exc:
+        return {"available": False, "message": f"{exc.name or 'transformer_engine'} is not installed"}
+    except Exception as exc:
+        return {"available": False, "message": str(exc)}
+
+    def package_version(name: str) -> str | None:
+        try:
+            return metadata.version(name)
+        except metadata.PackageNotFoundError:
+            return None
+
+    return {
+        "available": True,
+        "version": package_version("transformer-engine"),
+        "cuda12_version": package_version("transformer-engine-cu12"),
+        "cuda13_version": package_version("transformer-engine-cu13"),
+        "torch_extension_version": package_version("transformer-engine-torch"),
+    }
+
+
+def edgs_cuda_extension_status() -> dict[str, Any]:
+    checks = [
+        ("simple_knn._C", "simple_knn"),
+        ("diff_gaussian_rasterization", "diff_gaussian_rasterization"),
+    ]
+    issues: list[str] = []
+    for module_name, label in checks:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            issues.append(f"{label} cannot be imported: {exc}")
+    return {"available": not issues, "issues": issues}
+
+
+def lingbot_runtime_status() -> dict[str, Any]:
+    checks = [
+        ("torch", "torch"),
+        ("cv2", "opencv-python"),
+        ("numpy", "numpy"),
+    ]
+    issues: list[str] = []
+    for module_name, label in checks:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            issues.append(f"{label} cannot be imported: {exc}")
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            issues.append("torch.cuda.is_available() is false")
+    except Exception:
+        pass
+    flashinfer_available = True
+    try:
+        importlib.import_module("flashinfer")
+    except Exception:
+        flashinfer_available = False
+    return {"available": not issues, "issues": issues, "flashinfer_available": flashinfer_available}
 
 
 def algorithm_status(entry: dict[str, Any]) -> dict[str, Any]:

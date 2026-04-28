@@ -36,7 +36,7 @@ class PreviewEngineTests(unittest.TestCase):
     def setUp(self) -> None:
         TEST_TMP_ROOT.mkdir(exist_ok=True)
 
-    def test_video_plan_includes_ffmpeg_before_litevggt_edgs_spz(self) -> None:
+    def test_video_plan_uses_lingbot_map_before_spz(self) -> None:
         engine = PreviewEngine(AlgorithmRegistry())
         request = preview_request(input_type="video", raw_uri=str(TEST_TMP_ROOT / "video.mp4"))
 
@@ -44,8 +44,33 @@ class PreviewEngineTests(unittest.TestCase):
 
         self.assertEqual(
             [stage.algorithm for stage in plan.stages],
-            ["FFmpeg", "LiteVGGT", "EDGS", "Spark-SPZ"],
+            ["LingBot-Map", "Spark-SPZ"],
         )
+        self.assertEqual(plan.pipeline_options["preview_pipeline"], "lingbot_map_spark")
+
+    def test_image_plan_defaults_to_litevggt_edgs_spz(self) -> None:
+        engine = PreviewEngine(AlgorithmRegistry())
+        request = preview_request()
+
+        plan = engine.build_plan(request)
+
+        self.assertEqual(
+            [stage.algorithm for stage in plan.stages],
+            ["LiteVGGT", "EDGS", "Spark-SPZ"],
+        )
+        self.assertEqual(plan.pipeline_options["preview_pipeline"], "edgs")
+
+    def test_image_direct_pipeline_skips_edgs(self) -> None:
+        engine = PreviewEngine(AlgorithmRegistry())
+        request = preview_request(options={"skip_backend_cuda_check": True, "preview_pipeline": "litevggt_spark"})
+
+        plan = engine.build_plan(request)
+
+        self.assertEqual(
+            [stage.algorithm for stage in plan.stages],
+            ["LiteVGGT", "Spark-SPZ"],
+        )
+        self.assertIn("training_edgs", [stage.name for stage in plan.skipped_stages])
 
     def test_execute_fails_without_configured_preview_algorithms(self) -> None:
         engine = PreviewEngine(AlgorithmRegistry())

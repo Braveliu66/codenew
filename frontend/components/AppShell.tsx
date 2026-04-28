@@ -12,6 +12,7 @@ import {
   Home,
   LogIn,
   LogOut,
+  MemoryStick,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, clearToken, getToken, isPublicPath } from "@/lib/api";
@@ -26,6 +27,7 @@ const nav = [
 
 type ResourcePayload = {
   cpu?: Record<string, unknown>;
+  memory?: Record<string, unknown>;
   gpu?: Record<string, unknown>;
   workers?: Record<string, unknown>;
 };
@@ -207,8 +209,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <div className="resource-strip" aria-label="资源状态">
             <span className="resource-chip"><Cpu size={14} /><span>CPU</span><strong>{resourcePercent(resources.cpu?.usage_percent)}</strong></span>
+            <span className={`resource-chip ${resources.memory?.available ? "" : "warn"}`}>
+              <MemoryStick size={14} /><span>RAM</span><strong>{memoryValue(resources.memory)}</strong>
+            </span>
             <span className={`resource-chip ${resources.gpu?.available ? "" : "warn"}`}>
-              <Gauge size={14} /><span>GPU</span><strong>{resources.gpu?.available ? resourcePercent(resources.gpu?.usage_percent) : "--"}</strong>
+              <Gauge size={14} /><span>GPU</span><strong>{gpuUsageValue(resources.gpu)}</strong>
             </span>
             <span className="resource-chip warn"><HardDrive size={14} /><span>VRAM</span><strong>{vramValue(resources.gpu)}</strong></span>
           </div>
@@ -233,19 +238,61 @@ function getRouteLabel(pathname: string): string {
 }
 
 function resourcePercent(value: unknown): string {
-  if (typeof value === "number") return `${Math.round(value)}%`;
-  if (typeof value === "string" && value) return value;
+  const numeric = numericValue(value);
+  if (numeric !== null) return `${Math.round(Math.max(0, Math.min(100, numeric)))}%`;
+  if (typeof value === "string" && value.trim()) return value;
   return "--";
+}
+
+function gpuUsageValue(gpu?: Record<string, unknown>): string {
+  if (!gpu?.available) return "--";
+  const direct = numericValue(gpu.usage_percent);
+  if (direct !== null) return resourcePercent(direct);
+  const gpus = Array.isArray(gpu.gpus) ? gpu.gpus : [];
+  const values = gpus
+    .map((item) => numericValue((item as Record<string, unknown>).usage_percent))
+    .filter((value): value is number => value !== null);
+  return values.length ? resourcePercent(Math.max(...values)) : "--";
 }
 
 function vramValue(gpu?: Record<string, unknown>): string {
   if (!gpu?.available) return "--";
-  const used = gpu.memory_used;
-  const total = gpu.memory_total;
-  if (typeof used === "number" && typeof total === "number" && total > 0) {
+  const used = numericValue(gpu.memory_used);
+  const total = numericValue(gpu.memory_total);
+  if (used !== null && total !== null && total > 0) {
     return `${(used / 1024).toFixed(1)}G/${(total / 1024).toFixed(0)}G`;
   }
-  const percent = gpu.memory_usage_percent;
-  if (typeof percent === "number") return `${Math.round(percent)}%`;
+  const gpus = Array.isArray(gpu.gpus) ? gpu.gpus : [];
+  const totals = gpus.map((item) => numericValue((item as Record<string, unknown>).memory_total) ?? 0);
+  const usedValues = gpus.map((item) => numericValue((item as Record<string, unknown>).memory_used) ?? 0);
+  const totalFromGpus = totals.reduce((sum, value) => sum + value, 0);
+  const usedFromGpus = usedValues.reduce((sum, value) => sum + value, 0);
+  if (totalFromGpus > 0) return `${(usedFromGpus / 1024).toFixed(1)}G/${(totalFromGpus / 1024).toFixed(0)}G`;
+  const percent = numericValue(gpu.memory_usage_percent);
+  if (percent !== null) return `${Math.round(percent)}%`;
   return "--";
+}
+
+function memoryValue(memory?: Record<string, unknown>): string {
+  if (!memory?.available) return "--";
+  const used = numericValue(memory.used);
+  const total = numericValue(memory.total);
+  if (used !== null && total !== null && total > 0) {
+    return `${formatBinaryBytes(used)}/${formatBinaryBytes(total)}`;
+  }
+  return resourcePercent(memory.usage_percent);
+}
+
+function formatBinaryBytes(value: number): string {
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(0)}M`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)}G`;
+}
+
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }

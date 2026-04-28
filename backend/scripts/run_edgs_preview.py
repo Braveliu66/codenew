@@ -25,6 +25,8 @@ def main() -> int:
 
     python_bin = os.environ.get("EDGS_PYTHON") or sys.executable
     epochs = int(spec.get("edgs_epochs") or 3000)
+    cuda = cuda_summary()
+    print(json.dumps({"event": "edgs_cuda", **cuda}, ensure_ascii=False), flush=True)
     command = [
         python_bin,
         str(train_py),
@@ -38,6 +40,7 @@ def main() -> int:
         "init_wC.num_refs=180",
         "wandb.mode=disabled",
     ]
+    print(json.dumps({"event": "edgs_command", "cwd": str(repo_path), "command": command}, ensure_ascii=False), flush=True)
     completed = subprocess.run(command, cwd=str(repo_path), capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "EDGS train.py failed")
@@ -58,6 +61,22 @@ def main() -> int:
         },
     )
     return 0
+
+
+def cuda_summary() -> dict[str, object]:
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("torch is not installed for EDGS") from exc
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available for EDGS; refusing to run slow CPU training")
+    device_index = torch.cuda.current_device()
+    return {
+        "device_index": int(device_index),
+        "device_name": torch.cuda.get_device_name(device_index),
+        "torch_version": torch.__version__,
+        "torch_cuda_version": torch.version.cuda,
+    }
 
 
 def find_point_cloud(output_dir: Path) -> Path | None:

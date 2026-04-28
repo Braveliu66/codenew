@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import socket
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +18,7 @@ from backend.app.db import models
 from backend.app.db.session import SessionLocal, init_database
 from backend.app.services.object_storage import ObjectStorage
 from backend.app.services.registry_store import load_registry_from_db
+from backend.app.services.resource_monitor import current_gpu_resources
 from backend.app.services.seed import seed_database
 from backend.app.services.task_queue import PreviewTaskQueue, TaskQueueError
 
@@ -33,12 +33,13 @@ def main() -> None:
     storage = ObjectStorage()
     storage.ensure_bucket()
     queue = PreviewTaskQueue()
+    worker_input_type = os.environ.get("PREVIEW_WORKER_INPUT_TYPE", "images")
     worker_id = os.environ.get("WORKER_ID", f"preview-{socket.gethostname()}-{uuid.uuid4().hex[:8]}")
     while True:
         with SessionLocal() as db:
             write_heartbeat(db, worker_id=worker_id, current_task_id=None)
         try:
-            task_id = queue.pop_preview(timeout_seconds=5)
+            task_id = queue.pop_preview(timeout_seconds=5, input_type=worker_input_type)
         except TaskQueueError as exc:
             with SessionLocal() as db:
                 write_heartbeat(db, worker_id=worker_id, current_task_id=None)
@@ -70,6 +71,8 @@ def process_preview_task(
     project = task.project
     if task.status == "canceled":
         return task
+    if project.input_type != os.environ.get("PREVIEW_WORKER_INPUT_TYPE", project.input_type):
+        return task
 
     task.status = "running"
     task.progress = 5
@@ -87,7 +90,7 @@ def process_preview_task(
         task.current_stage = "preview_engine"
         task.progress = 15
         db.commit()
-        result = PreviewEngine(load_registry_from_db(db)).execute(request)
+        result = PreviewEngine(load_registry_from_db(db), progress_callback=task_progress_callback(db, task)).execute(request)
         if result.status != "succeeded":
             mark_failed(db, task, project, result)
             return task
@@ -119,7 +122,7 @@ def build_preview_request(task: models.Task, project: models.Project, storage: O
         images = [item for item in media if item.kind == "image"]
         if not images:
             raise ValueError("preview requires at least one uploaded image")
-        min_frames = settings.preview_min_input_frames
+        min_frames = 1
         max_frames = int((task.options or {}).get("max_preview_frames") or settings.preview_max_input_frames)
         max_frames = min(max(max_frames, min_frames), settings.preview_max_input_frames)
         if len(images) < min_frames:
@@ -208,7 +211,10 @@ def persist_success(db: Session, task: models.Task, project: models.Project, res
         object_uri=object_uri,
         file_name="preview.spz",
         file_size=source.stat().st_size,
-        artifact_metadata={"pipeline": "litevggt_edgs_spz"},
+        artifact_metadata={
+            "pipeline": (result.metrics or {}).get("pipeline"),
+            "preview_pipeline": (result.metrics or {}).get("preview_pipeline"),
+        },
     )
     db.add(artifact)
     task.status = "succeeded"
@@ -231,11 +237,27 @@ def collect_task_logs(result: TaskExecutionResult) -> list[str]:
         details = error.get("details") or {}
         stdout = str(details.get("stdout") or "").strip()
         stderr = str(details.get("stderr") or "").strip()
+        stdout_path = str(details.get("stdout_path") or "").strip()
+        stderr_path = str(details.get("stderr_path") or "").strip()
+        if stdout_path or stderr_path:
+            logs.append(f"log files:\nstdout: {stdout_path or '-'}\nstderr: {stderr_path or '-'}")
         if stdout:
             logs.append("stdout:\n" + stdout)
         if stderr:
             logs.append("stderr:\n" + stderr)
     return logs
+
+
+def task_progress_callback(db: Session, task: models.Task):
+    def update(stage: str, progress: int) -> None:
+        db.refresh(task)
+        if task.status != "running":
+            return
+        task.current_stage = stage
+        task.progress = max(int(task.progress or 0), min(max(int(progress), 0), 99))
+        db.commit()
+
+    return update
 
 
 def write_heartbeat(db: Session, *, worker_id: str, current_task_id: str | None) -> None:
@@ -256,30 +278,17 @@ def write_heartbeat(db: Session, *, worker_id: str, current_task_id: str | None)
 
 
 def detect_gpu() -> dict[str, Any]:
-    try:
-        completed = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,name,memory.total,memory.used,utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
+    resources = current_gpu_resources()
+    gpus = resources.get("gpus") if isinstance(resources, dict) else None
+    if not isinstance(gpus, list) or not gpus:
         return {}
-    line = completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else ""
-    parts = [part.strip() for part in line.split(",")]
-    if len(parts) < 5:
-        return {}
+    first = gpus[0]
     return {
-        "gpu_index": int(parts[0]),
-        "gpu_name": parts[1],
-        "gpu_memory_total": int(parts[2]),
-        "gpu_memory_used": int(parts[3]),
-        "gpu_utilization": float(parts[4]),
+        "gpu_index": int(first.get("index") or 0),
+        "gpu_name": first.get("name"),
+        "gpu_memory_total": int(float(first.get("memory_total") or 0)),
+        "gpu_memory_used": int(float(first.get("memory_used") or 0)),
+        "gpu_utilization": float(first.get("usage_percent") or 0),
     }
 
 

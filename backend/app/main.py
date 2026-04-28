@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import shutil
-import subprocess
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +45,13 @@ from backend.app.services.project_store import (
     worker_heartbeats,
 )
 from backend.app.services.registry_store import load_registry_from_db, registry_to_response
+from backend.app.services.resource_monitor import (
+    current_cpu_resources,
+    current_gpu_resources,
+    current_memory_resources,
+    gpu_resources_from_workers,
+    parse_nvidia_smi_gpus,
+)
 from backend.app.services.runtime_preflight import build_runtime_preflight
 from backend.app.services.seed import seed_database
 from backend.app.services.serializers import (
@@ -95,102 +99,7 @@ def queue_dependency() -> PreviewTaskQueue:
 
 
 def current_cpu_percent() -> float | None:
-    proc = Path("/proc/stat")
-    if proc.exists():
-        first = read_proc_cpu(proc)
-        time.sleep(0.05)
-        second = read_proc_cpu(proc)
-        if first and second:
-            idle_delta = second["idle"] - first["idle"]
-            total_delta = second["total"] - first["total"]
-            if total_delta > 0:
-                return round(max(0.0, min(100.0, (1 - idle_delta / total_delta) * 100)), 1)
-    try:
-        completed = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                "(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        value = completed.stdout.strip()
-        return round(float(value), 1) if value else None
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-
-
-def read_proc_cpu(path: Path) -> dict[str, int] | None:
-    try:
-        parts = path.read_text(encoding="utf-8").splitlines()[0].split()
-    except (OSError, IndexError):
-        return None
-    if len(parts) < 5 or parts[0] != "cpu":
-        return None
-    values = [int(part) for part in parts[1:] if part.isdigit()]
-    if len(values) < 4:
-        return None
-    idle = values[3] + (values[4] if len(values) > 4 else 0)
-    return {"idle": idle, "total": sum(values)}
-
-
-def current_gpu_resources() -> dict[str, Any]:
-    if not shutil.which("nvidia-smi"):
-        return {
-            "available": False,
-            "usage_percent": None,
-            "memory_total": None,
-            "memory_used": None,
-            "memory_usage_percent": None,
-            "message": "nvidia-smi is not available in this runtime",
-        }
-    try:
-        completed = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=utilization.gpu,memory.total,memory.used",
-                "--format=csv,noheader,nounits",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {
-            "available": False,
-            "usage_percent": None,
-            "memory_total": None,
-            "memory_used": None,
-            "memory_usage_percent": None,
-            "message": str(exc),
-        }
-    line = completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else ""
-    parts = [part.strip() for part in line.split(",")]
-    if len(parts) < 3:
-        return {
-            "available": False,
-            "usage_percent": None,
-            "memory_total": None,
-            "memory_used": None,
-            "memory_usage_percent": None,
-            "message": "nvidia-smi returned no GPU utilization data",
-        }
-    usage = float(parts[0])
-    total = float(parts[1])
-    used = float(parts[2])
-    return {
-        "available": True,
-        "usage_percent": usage,
-        "memory_total": total,
-        "memory_used": used,
-        "memory_usage_percent": round((used / total) * 100, 1) if total > 0 else None,
-        "message": None,
-    }
+    return current_cpu_resources()["usage_percent"]
 
 
 def collect_task_logs(result: Any) -> list[str]:
@@ -202,6 +111,10 @@ def collect_task_logs(result: Any) -> list[str]:
         details = error.get("details") or {}
         stdout = str(details.get("stdout") or "").strip()
         stderr = str(details.get("stderr") or "").strip()
+        stdout_path = str(details.get("stdout_path") or "").strip()
+        stderr_path = str(details.get("stderr_path") or "").strip()
+        if stdout_path or stderr_path:
+            logs.append(f"log files:\nstdout: {stdout_path or '-'}\nstderr: {stderr_path or '-'}")
         if stdout:
             logs.append("stdout:\n" + stdout)
         if stderr:
@@ -400,8 +313,13 @@ def create_app() -> FastAPI:
     def resources(_: models.User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
         workers = worker_heartbeats(db)
         gpu = current_gpu_resources()
+        if not gpu.get("available"):
+            worker_gpu = gpu_resources_from_workers(workers)
+            if worker_gpu.get("available"):
+                gpu = worker_gpu
         return {
-            "cpu": {"available": True, "usage_percent": current_cpu_percent()},
+            "cpu": current_cpu_resources(),
+            "memory": current_memory_resources(),
             "gpu": gpu,
             "workers": {"count": len(workers), "active_task_count": sum(1 for item in workers if item.current_task_id)},
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -526,7 +444,7 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            queue.enqueue_preview(task.id)
+            queue.enqueue_preview(task.id, input_type=project.input_type)
         except TaskQueueError as exc:
             task.status = "failed"
             task.progress = 100
