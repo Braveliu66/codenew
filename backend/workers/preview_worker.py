@@ -137,17 +137,20 @@ def build_preview_request(task: models.Task, project: models.Project, storage: O
             target = image_dir / f"{index:04d}{suffix}"
             storage.download_to_path(item.object_uri, target)
         raw_uri = str(image_dir)
-    elif project.input_type == "video":
+    elif project.input_type in {"video", "camera"}:
         videos = [item for item in media if item.kind == "video"]
         if not videos:
             raise ValueError("preview requires an uploaded video")
-        source = videos[0]
-        suffix = Path(source.file_name).suffix or ".mp4"
+        media_asset_id = str((task.options or {}).get("media_asset_id") or "")
+        source = next((item for item in videos if item.id == media_asset_id), None) if media_asset_id else None
+        source = source or sorted(videos, key=lambda item: item.created_at)[-1]
+        default_suffix = ".webm" if project.input_type == "camera" else ".mp4"
+        suffix = Path(source.file_name).suffix or default_suffix
         target = raw_dir / f"source{suffix}"
         storage.download_to_path(source.object_uri, target)
         raw_uri = str(target)
     else:
-        raise ValueError("camera preview is not implemented")
+        raise ValueError("unsupported preview input type")
 
     return PreviewTaskRequest(
         task_id=task.id,
@@ -202,18 +205,23 @@ def persist_success(db: Session, task: models.Task, project: models.Project, res
     source = Path(str(preview.get("path") or ""))
     if not source.exists() or source.stat().st_size <= 0:
         raise RuntimeError("preview_spz artifact is missing or empty")
-    object_name = f"users/{project.owner_id}/projects/{project.id}/preview/preview.spz"
+    metadata = dict(preview.get("metadata") or {})
+    progressive = bool(metadata.get("progressive"))
+    file_name = str(preview.get("file_name") or source.name or "preview.spz")
+    artifact_kind = "preview_spz_segment" if progressive else "preview_spz"
+    object_name = f"users/{project.owner_id}/projects/{project.id}/preview/{file_name}"
     object_uri = storage.put_file(object_name, source, content_type="application/octet-stream")
     artifact = models.Artifact(
         project_id=project.id,
         task_id=task.id,
-        kind="preview_spz",
+        kind=artifact_kind,
         object_uri=object_uri,
-        file_name="preview.spz",
+        file_name=file_name,
         file_size=source.stat().st_size,
         artifact_metadata={
             "pipeline": (result.metrics or {}).get("pipeline"),
             "preview_pipeline": (result.metrics or {}).get("preview_pipeline"),
+            **metadata,
         },
     )
     db.add(artifact)

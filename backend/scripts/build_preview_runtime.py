@@ -7,7 +7,6 @@ import platform
 import shutil
 import subprocess
 import sys
-import urllib.request
 from importlib import metadata
 from pathlib import Path
 
@@ -98,23 +97,22 @@ def clone_checkout(url: str, target: Path, commit: str, *, recursive: bool = Fal
 
 
 def resolve_litevggt_weight(models_root: Path, weight_cache_root: Path) -> Path:
-    endpoint = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com").rstrip("/")
+    runtime_weight = Path("/model-cache/litevggt") / LITEVGGT_WEIGHT_FILE
+    cached = weight_cache_root / "litevggt" / LITEVGGT_WEIGHT_FILE
     target = models_root / "litevggt" / LITEVGGT_WEIGHT_FILE
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and target.stat().st_size > 0:
-        return target.resolve()
-    cached = weight_cache_root / "litevggt" / LITEVGGT_WEIGHT_FILE
     if cached.exists() and cached.stat().st_size > 0:
         print(f"Using cached LiteVGGT weight from {cached}", flush=True)
         shutil.copy2(cached, target)
         return target.resolve()
-    url = f"{endpoint}/{LITEVGGT_WEIGHT_REPO}/resolve/main/{LITEVGGT_WEIGHT_FILE}"
-    print(f"Downloading LiteVGGT weights from {url}", flush=True)
-    with urllib.request.urlopen(url) as response:
-        target.write_bytes(response.read())
-    if target.stat().st_size <= 0:
-        raise RuntimeError(f"Downloaded an empty weight file: {target}")
-    return target.resolve()
+    if target.exists() and target.stat().st_size > 0:
+        return target.resolve()
+    print(
+        "LiteVGGT weight is not embedded during Docker build; "
+        f"worker startup will ensure {runtime_weight}",
+        flush=True,
+    )
+    return runtime_weight
 
 
 def install_python_runtime(litevggt: Path, edgs: Path) -> None:

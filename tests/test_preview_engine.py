@@ -48,6 +48,22 @@ class PreviewEngineTests(unittest.TestCase):
         )
         self.assertEqual(plan.pipeline_options["preview_pipeline"], "lingbot_map_spark")
 
+    def test_camera_plan_uses_lingbot_map_progressive_streaming(self) -> None:
+        engine = PreviewEngine(AlgorithmRegistry())
+        request = preview_request(
+            input_type="camera",
+            raw_uri=str(TEST_TMP_ROOT / "camera.webm"),
+            options={"skip_backend_cuda_check": True, "progressive": True, "segment_index": 3},
+        )
+
+        plan = engine.build_plan(request)
+
+        self.assertEqual([stage.algorithm for stage in plan.stages], ["LingBot-Map", "Spark-SPZ"])
+        self.assertEqual(plan.stages[0].name, "camera_lingbot_map")
+        self.assertEqual(plan.pipeline_options["video_preview_mode"], "streaming")
+        self.assertTrue(plan.pipeline_options["progressive"])
+        self.assertEqual(plan.pipeline_options["segment_index"], 3)
+
     def test_image_plan_defaults_to_litevggt_edgs_spz(self) -> None:
         engine = PreviewEngine(AlgorithmRegistry())
         request = preview_request()

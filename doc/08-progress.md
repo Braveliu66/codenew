@@ -14,10 +14,11 @@
 8. 新增 `GET /api/admin/runtime/preflight` 和 `python -m backend.scripts.check_preview_runtime`，用于检查 GPU、torch、算法仓库、权重和命令。
 9. 前端 Spark Viewer 增加自适应质量控制：目标 90 FPS，低于 90 降低画质，高于 105 并稳定后提升画质。
 10. 管理页增加 Runtime Preflight 面板，上传页显示预览输入帧数规则。
-11. 模型权重缓存规则已固定：后续新增模型都先放入 `model-cache/<model-name>/...`，构建脚本命中本地缓存后再复制进运行镜像，缺失时才远端下载。
+11. 模型权重缓存规则已固定：后续新增模型都先放入共享 `model-cache/<model-name>/...`，worker 启动预检命中本地缓存后直接运行，缺失时使用 `.part` 和 HTTP Range 断点续传下载。
 12. LiteVGGT 运行环境改为显式安装 `transformer-engine[pytorch]`，不在脚本里模拟或降级替代算法依赖。
 13. 预览队列拆分为 `preview_image_tasks` 和 `preview_video_tasks`，API 按项目输入类型路由到对应 worker。
-14. 新增独立 LingBot-Map 视频预览镜像，使用 Python 3.10、CUDA 12.8、PyTorch 2.8.0 cu128，权重固定读取 `model-cache/lingbot-map/lingbot-map-long.pt`。
+14. 新增独立 LingBot-Map 视频/摄像头预览镜像，使用 Python 3.10、CUDA 12.8、PyTorch 2.8.0 cu128，权重固定读取共享 `model-cache/lingbot-map/lingbot-map-long.pt`。
+15. 实时摄像头入口已改为 LingBot-Map streaming MVP：浏览器分片上传、camera-worker 处理 `preview_camera_tasks`、SSE 通知 Viewer 加载增量 SPZ segment。
 
 ## 当前预览规则
 
@@ -47,6 +48,6 @@
 
 ## 当前限制
 
-1. 精细重建、Mesh、LOD 产物导出和实时摄像头仍未纳入本阶段可用范围。
+1. 精细重建、Mesh 和完整 LOD 产物导出仍未纳入本阶段可用范围；实时摄像头已有渐进式预览 MVP。
 2. EDGS 使用原仓库许可证，当前记录为非商业研究和个人用途。
 3. Docker 构建仍依赖 GitHub、PyPI 镜像和 npm 镜像可访问；Hugging Face 权重下载只在本地 `model-cache` 缺失时发生。

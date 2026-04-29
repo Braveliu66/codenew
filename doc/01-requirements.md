@@ -40,7 +40,7 @@
 ### 3.3 极速预览
 
 - 图片输入使用 LiteVGGT + EDGS 管线生成 `preview.spz` 和低细节 LOD 文件。
-- 视频输入使用 LingBot-Map 生成粗略点云并转换为 Spark-SPZ；实时摄像头输入仍作为后续独立能力处理。
+- 视频输入使用 LingBot-Map 生成粗略点云并转换为 Spark-SPZ；实时摄像头输入使用 LingBot-Map streaming 分片生成增量 SPZ segment。
 - 预览任务优先级高于精细重建任务。
 - 预览完成后，前端应能立即加载可交互模型。
 - 预览运行时前端应展示当前阶段、进度条、预计剩余时间。
@@ -138,6 +138,6 @@
 当前仍未完成的需求：
 
 1. 真实 CUDA 环境下的 LiteVGGT → EDGS → Spark-SPZ 成功路径还需在 Docker/WSL 部署后验证。
-2. Stream3R 实时摄像头、精细重建 4.1、Mesh 导出和 LOD 仍显示未接入。
+2. 精细重建 4.1、Mesh 导出和完整 LOD 产物导出仍显示未接入；实时摄像头已有 LingBot-Map 渐进式预览 MVP。
 3. 分片上传、SSE/WebSocket 事件、用户用量统计和复杂管理员统计仍是后续项。
 4. 所有源码、配置、文档统一使用 UTF-8 编码。

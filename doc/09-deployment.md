@@ -1,191 +1,142 @@
 # 部署与运行说明
 
-本文档记录当前 Docker/WSL GPU 预览部署方式。目标是单机 GPU 先打通真实预览链路：图片走 LiteVGGT/EDGS，视频走 LingBot-Map，最终都转换为 SPZ 并在前端查看。
+本文档记录当前 Docker/WSL GPU 预览部署方式。目标是单机 GPU 先打通真实预览链路：图片走 LiteVGGT/EDGS，视频和实时摄像头走 LingBot-Map，最终转换为 SPZ 并在前端查看。
 
 ## 服务组成
 
 `deploy/docker-compose.preview.yml` 包含：
 
-- `backend`：FastAPI API，启动前执行 Alembic migration。
+- `backend`：轻量 FastAPI API 镜像，只运行 API、迁移和对象存储访问，不携带大算法依赖。
 - `image-worker`：独立图片 GPU preview worker，运行 LiteVGGT/EDGS/Spark 命令。
 - `video-worker`：独立视频 GPU preview worker，运行 LingBot-Map/Spark 命令。
-- `postgres`：PostgreSQL 元数据库。
-- `redis`：预览任务队列。
-- `minio`：上传文件和算法产物对象存储。
-- `frontend`：Next.js 前端，Spark 通过 npm 构建打包。
+- `camera-worker`：独立实时摄像头 GPU preview worker，消费 `preview_camera_tasks`，运行 LingBot-Map streaming/Spark 命令。
+- `postgres`、`redis`、`minio`、`frontend`：分别提供元数据、队列、对象存储和 Next.js 前端。
 
-## Docker 构建期自动完成
+## 为什么 Docker 中断后会从头下载
 
-`backend/Dockerfile.preview` 使用 Python 3.12 和 CUDA devel 镜像，在镜像构建期完成：
+Docker build 的每个 `RUN` 是一个镜像层。大权重如果在某个 `RUN` 中下载，下载中断后该层不会提交，容器临时文件也会丢失；下一次 build 只能重新开始。解决方式是把权重下载移到宿主机/共享卷 `model-cache`，并用 `.part` 文件与 HTTP Range 续传。
 
-- 安装系统工具：git、ffmpeg、build-essential、cmake、ninja、Rust、Node/npm。
-- clone 并固定算法仓库：
-  - LiteVGGT `4767c17f8b6f176bb751566e92f60eb885040033`
-  - EDGS `9a897645eb47c1b24d4f9e4428cd745927bf1ee1`
-  - Spark `915c474795e0c78f7cd1b7f4eb97695028b495c0`
-- 优先从 `model-cache/litevggt/te_dict.pt` 复制 LiteVGGT 权重；本地缓存缺失时才下载 `te_dict.pt`。
-- 安装 LiteVGGT、EDGS、Spark 依赖。
-- 生成 `/opt/three-dgs/runtime/algorithm_registry.generated.json`。
+当前规则：
 
-默认下载源：
+- Docker build 只安装系统依赖、Python/CUDA 依赖、算法仓库和 registry，不远端下载大模型权重。
+- Worker 启动前执行 `backend.scripts.ensure_model_weights`，检查共享 `/model-cache`。
+- 缺失权重时，下载脚本写入 `*.part` 并支持 Range 续传；完成后原子替换为正式权重文件。
+- 多个 Worker 同时启动时使用 lock 文件避免重复下载。
 
-| 用途 | 默认值 |
-| --- | --- |
-| Hugging Face | `HF_ENDPOINT=https://hf-mirror.com` |
-| PyPI | `PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` |
-| npm | `NPM_CONFIG_REGISTRY=https://registry.npmmirror.com` |
+## 基础镜像拉取 EOF 排障
 
-这些值可通过 Docker build args 覆盖。
+如果错误出现在类似 `[image-worker stage-0 2/13] WORKDIR /workspace`，并且日志里有 `httpReadSeeker`、`failed to copy`、`image-mirror.r2.daocloud.vip`、`EOF`，根因不是 Dockerfile 的 `WORKDIR`，也不是模型权重下载，而是 Docker 在拉取基础镜像 layer 时镜像源中断。
 
-## LingBot-Map 视频 Worker 镜像
+处理方式：
 
-视频极速预览不再复用图片 worker 的 LiteVGGT/EDGS 环境。`backend/Dockerfile.lingbot_preview` 单独构建 `three-dgs-video-preview-runtime:local`，包含：
-
-- Python 3.10、CUDA 12.8、PyTorch 2.8.0 cu128。
-- LingBot-Map 官方仓库、OpenCV/ffmpeg、Spark-SPZ 转换依赖。
-- 可选 FlashInfer 加速依赖；默认 `INSTALL_FLASHINFER=false`，未安装时 adapter 使用 SDPA 路径，不阻塞基础推理。
-- `ALGORITHM_REGISTRY_PATH=/opt/three-dgs-lingbot/runtime/algorithm_registry.generated.json`。
-
-LingBot-Map 权重只从本地模型缓存读取：
-
-```text
-model-cache/lingbot-map/lingbot-map-long.pt
+```bash
+python backend/scripts/pull_base_images.py --retries 5
+docker compose -f deploy/docker-compose.preview.yml build image-worker
 ```
 
-构建或预检时如果缺少该文件会失败，任务运行期间不会临时下载。`skyseg.onnx` 只在 `mask_sky=true` 时需要，默认不开启。
+`make deploy` 会先执行模型权重预检，再预拉取基础镜像，最后执行 compose build。如果 DaoCloud 镜像持续 EOF，需要在 Docker Desktop/daemon 中删除或替换故障 registry mirror；或者显式指定可访问的基础镜像：
 
-## 本地模型权重缓存
+```bash
+$env:API_BASE_IMAGE="python:3.12-slim"
+$env:PREVIEW_CUDA_BASE_IMAGE="nvidia/cuda:12.6.2-cudnn-devel-ubuntu22.04"
+$env:LINGBOT_CUDA_BASE_IMAGE="nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04"
+```
 
-所有模型权重都必须先落到项目根目录的本地缓存，再进入 Docker 镜像。后续接入新模型时也按这个规则处理，避免每次构建环境都重新下载大文件。
+这些变量会传给 `backend/Dockerfile.api`、`backend/Dockerfile.preview` 和 `backend/Dockerfile.lingbot_preview` 的 `FROM`。注意：如果 Docker daemon 配置了损坏的 registry mirror，同名 Docker Hub 镜像仍可能被 daemon 代理到该 mirror，需要修复 daemon 的 mirror 配置。
 
-当前 LiteVGGT 权重约定：
+## 模型缓存
+
+缓存路径：
 
 ```text
 model-cache/litevggt/te_dict.pt
+model-cache/lingbot-map/lingbot-map-long.pt
 ```
 
-首次准备或补齐缓存：
+准备缓存：
 
 ```bash
-python backend/scripts/download_model_weights.py
-docker compose -f deploy/docker-compose.preview.yml build backend image-worker video-worker
+python backend/scripts/download_model_weights.py --cache-root model-cache --models litevggt lingbot-map
 ```
 
-构建规则：
-
-- `backend/Dockerfile.preview` 会把根目录 `model-cache` 复制到镜像内的 `/workspace/model-cache`。
-- `backend/scripts/build_preview_runtime.py` 会先查找 `/workspace/model-cache/litevggt/te_dict.pt`，命中后复制到 `/opt/three-dgs/models/litevggt/te_dict.pt`。
-- 只有本地缓存缺失时才允许按 `HF_ENDPOINT` 等配置从远端下载。
-- 大权重文件不提交 Git；`model-cache/**/*.pt`、`model-cache/**/*.bin`、`model-cache/**/*.safetensors` 已被 `.gitignore` 忽略，目录用 `.gitkeep` 保留。
-- 新增模型时必须同步更新下载脚本、构建脚本、Dockerfile/Compose 复制路径和 `algorithm_registry` 中的 `weight_source`/`weight_path`，不能只在容器临时目录里一次性下载。
-- LingBot-Map 权重固定为 `model-cache/lingbot-map/lingbot-map-long.pt`，该文件不会被提交到 Git，也不会在任务运行时下载。
-
-## 关键环境变量
-
-| 变量 | 说明 |
-| --- | --- |
-| `DATABASE_URL` | SQLAlchemy 数据库连接，Compose 默认使用 PostgreSQL |
-| `REDIS_URL` | Redis 队列连接 |
-| `MINIO_ENDPOINT` | MinIO 服务地址 |
-| `MINIO_BUCKET` | 对象存储 bucket |
-| `JWT_SECRET` | JWT 签名密钥，正式部署必须替换 |
-| `DEFAULT_ADMIN_USERNAME` | 默认管理员用户名 |
-| `DEFAULT_ADMIN_PASSWORD` | 默认管理员密码，正式部署必须替换 |
-| `ALGORITHM_REGISTRY_PATH` | Docker 生成的算法 registry 路径 |
-| `THREE_DGS_STORAGE_ROOT` | worker 临时工作目录和本地测试存储根目录 |
-| `PREVIEW_MIN_INPUT_FRAMES` | 视频预览最少采样帧数，默认 `8`；图片固定至少 1 张 |
-| `PREVIEW_MAX_INPUT_FRAMES` | 预览输入生产上限，默认 `800` |
-| `PREVIEW_DEFAULT_EDGS_EPOCHS` | EDGS 预览训练迭代数，默认 `3000` |
-| `PREVIEW_DEFAULT_PIPELINE` | 图片预览默认管线，默认 `edgs`，可选 `litevggt_spark` |
-| `LINGBOT_MODEL_PATH` | LingBot-Map 权重路径，默认 `/model-cache/lingbot-map/lingbot-map-long.pt` |
-| `VIDEO_PREVIEW_MODE` | 视频预览推理模式，默认 `windowed` |
-| `VIDEO_PREVIEW_TARGET_FRAMES` | 可选视频目标采样帧数；未设置时按完整时长均匀采样 |
-| `VIEWER_TARGET_FPS` | 前端 3DGS 查看器目标 FPS，默认 `90` |
-| `VIEWER_QUALITY_UP_FPS` | 高于该 FPS 并稳定后提升画质，默认 `105` |
-| `VIEWER_QUALITY_DOWN_FPS` | 低于该 FPS 时降低画质，默认 `90` |
-
-## 启动
-
-在项目根目录执行：
+如果默认 Hugging Face 路径不适合当前网络，可设置：
 
 ```bash
-docker compose -f deploy/docker-compose.preview.yml up --build
+$env:HF_ENDPOINT="https://hf-mirror.com"
+$env:LITEVGGT_WEIGHT_URL="<direct-url>"
+$env:LINGBOT_WEIGHT_URL="<direct-url>"
 ```
 
-启动后：
+## 一键部署
+
+推荐：
+
+```bash
+make deploy
+```
+
+等价于：
+
+```bash
+python backend/scripts/download_model_weights.py --cache-root model-cache --models litevggt lingbot-map
+python backend/scripts/pull_base_images.py --images python:3.12-slim nvidia/cuda:12.6.2-cudnn-devel-ubuntu22.04 nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+docker compose -f deploy/docker-compose.preview.yml up -d --build
+```
+
+如果本机没有 `make`：
+
+```bash
+python backend/scripts/download_model_weights.py --cache-root model-cache --models litevggt lingbot-map
+python backend/scripts/pull_base_images.py --retries 5
+docker compose -f deploy/docker-compose.preview.yml up -d --build
+```
+
+Worker 启动时仍会自动补齐缺失权重。
+
+## GPU 与依赖隔离
+
+- `backend/Dockerfile.api`：API 镜像，Python 3.12 slim，不占用 GPU。
+- `backend/Dockerfile.preview`：图片 Worker 镜像，Python 3.12 + CUDA 12.6，包含 LiteVGGT、EDGS、Spark。
+- `backend/Dockerfile.lingbot_preview`：视频/摄像头 Worker 镜像，Python 3.10 + CUDA 12.8 + PyTorch 2.8 cu128，包含 LingBot-Map、Spark。
+- Compose 通过 NVIDIA Container Toolkit 的 `deploy.resources.reservations.devices` 透传 GPU 给 Worker。
+- 新增算法时按固定模式扩展：新增 Dockerfile 或复用算法镜像、新增 compose 服务块、新增 registry 能力和 Worker 队列。
+
+## 实时摄像头与渐进式预览
+
+实时摄像头路径：
+
+```text
+Browser MediaRecorder -> POST /api/projects/{id}/camera/chunks
+-> preview_camera_tasks -> camera-worker
+-> LingBot-Map streaming -> Spark-SPZ
+-> preview_spz_segment artifact -> SSE preview_segment_ready
+-> Viewer 增量加载
+```
+
+`GET /api/projects/{project_id}/viewer-config` 返回：
+
+- `mode=single`：传统单文件 `preview.spz`。
+- `mode=progressive`：多个 `preview_segment_*.spz`，前端按时间线加载。
+
+## 常用命令
+
+```bash
+docker compose -f deploy/docker-compose.preview.yml up -d
+docker compose -f deploy/docker-compose.preview.yml restart image-worker video-worker camera-worker
+docker compose -f deploy/docker-compose.preview.yml run --rm image-worker python -m backend.scripts.check_preview_runtime
+docker compose -f deploy/docker-compose.preview.yml run --rm video-worker python -m backend.scripts.check_preview_runtime
+docker compose -f deploy/docker-compose.preview.yml run --rm camera-worker python -m backend.scripts.check_preview_runtime
+```
+
+服务地址：
 
 - 前端：http://localhost:3001
 - 后端健康检查：http://localhost:8000/health
 - MinIO Console：http://localhost:9001
 
-前端容器内部仍监听 `3000`，Compose 对外映射到主机 `3001`。本机开发也使用 `3001`，尽量让主机 `3000` 保持空闲，避免和算法 demo 或其他容器端口冲突。
+## 验收标准
 
-默认开发管理员为 `admin / admin123`，只用于本地验证。
-
-## 运行时预检
-
-管理员接口：
-
-```bash
-GET /api/admin/runtime/preflight
-```
-
-容器内命令：
-
-```bash
-docker compose -f deploy/docker-compose.preview.yml run --rm image-worker python -m backend.scripts.check_preview_runtime
-docker compose -f deploy/docker-compose.preview.yml run --rm video-worker python -m backend.scripts.check_preview_runtime
-```
-
-预检会检查 Python、CUDA、torch、nvidia-smi、算法仓库路径、commit、权重文件和命令入口。
-video-worker 还会检查 LingBot-Map 依赖和 CUDA 可用性；LingBot registry 启用但权重缺失时预检失败。
-
-## 预览验收
-
-图片项目：
-
-- 上传至少 1 张图片。
-- 默认 `preview_pipeline=edgs`，链路为 LiteVGGT -> EDGS -> Spark-SPZ。
-- 可选 `preview_pipeline=litevggt_spark`，链路为 LiteVGGT -> Spark-SPZ。
-- 超过 800 张时，image-worker 会均匀采样 800 张参与预览。
-- LiteVGGT 输出 EDGS 可用的 `images/` 和 `sparse/0` COLMAP 结构。
-
-视频项目：
-
-- video-worker 使用 LingBot-Map，不自动回退旧 FFmpeg -> LiteVGGT -> EDGS 管线。
-- 默认按完整时长均匀采样，覆盖开头、中段、结尾；不固定 16 帧或 1 fps。
-- 抽帧结果少于配置的最小帧数时任务失败，不创建 artifact。
-- 默认最多抽取 800 帧，可通过 `VIDEO_PREVIEW_TARGET_FRAMES` 或任务级 `frame_sample_fps` 调整。
-
-成功标准：
-
-- task 状态为 `succeeded`。
-- MinIO 中存在非空 `preview.spz`。
-- `GET /api/projects/{project_id}/viewer-config` 返回 `ready`。
-- 前端项目详情页 Spark Viewer 加载模型，并以 90 FPS 为目标自动调节清晰度。
-
-## 常见问题
-
-- 构建阶段下载失败：检查 GitHub、`hf-mirror.com`、PyPI 镜像和 npm 镜像访问。
-- 构建阶段反复下载 LiteVGGT 权重：先确认 `model-cache/litevggt/te_dict.pt` 存在，并在构建日志中看到 `Using cached LiteVGGT weight`。
-- `No module named 'transformer_engine'`：当前 LiteVGGT 运行依赖 `transformer-engine[pytorch]`，重新 build `backend` 和 `image-worker` 镜像后再运行预检。
-- LingBot-Map 权重缺失：确认 `model-cache/lingbot-map/lingbot-map-long.pt` 存在且非空，然后重新 build `video-worker`。
-- 视频任务进入旧管线：确认 API 与 worker 已重启，`PREVIEW_WORKER_INPUT_TYPE=video` 的服务正在消费 `preview_video_tasks`。
-- `runtime/preflight` 显示 commit mismatch：清理镜像缓存后重新 build。
-- `torch.cuda.is_available=false`：检查 Docker Desktop WSL2 GPU、NVIDIA 驱动和 Compose GPU reservation。
-- EDGS CUDA 扩展编译失败：优先检查 CUDA_HOME、PyTorch CUDA 版本和编译工具链。
-
-
-
-
-# 这次需要重建一次，让新 Compose/Docker 配置生效
-docker compose -f deploy\docker-compose.preview.yml up -d --build
-
-# 之后普通代码修改，不要加 --build
-docker compose -f deploy\docker-compose.preview.yml up -d
-
-改前端页面/组件：浏览器热更新，不重建
-改 backend API：自动 reload，不重建
-改 worker 主循环/任务执行逻辑：不重建，但要 docker compose -f deploy\docker-compose.preview.yml restart image-worker video-worker
-改 backend/requirements.txt、Dockerfile、算法依赖、CUDA/Transformer Engine 版本：才需要重新 build
-改 frontend/package.json：通常执行 docker compose -f deploy\docker-compose.preview.yml exec frontend npm ci，不用重建大算法镜像
+- 图片任务成功后 MinIO 中存在非空 `preview.spz`，viewer-config 返回 `mode=single`。
+- 视频任务使用 LingBot-Map，不回退旧 FFmpeg -> LiteVGGT -> EDGS 管线。
+- 实时摄像头页面能启动摄像头、分片上传、创建 camera preview task，并在 segment 完成后通过 SSE 刷新 Viewer。
+- Viewer 以 90 FPS 为目标自适应质量；progressive 模式支持时间线和增量加载。

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-FROM nvidia/cuda:12.6.2-cudnn-devel-ubuntu22.04
+ARG PREVIEW_CUDA_BASE_IMAGE=nvidia/cuda:12.6.2-cudnn-devel-ubuntu22.04
+FROM ${PREVIEW_CUDA_BASE_IMAGE}
 
 SHELL ["/bin/bash", "-lc"]
 WORKDIR /workspace
@@ -71,13 +72,12 @@ RUN --mount=type=cache,id=three-dgs-pip-cache,target=/root/.cache/pip,sharing=lo
     && python -m pip install -r backend/requirements.txt
 
 COPY backend/scripts/build_preview_runtime.py backend/scripts/build_preview_runtime.py
-RUN --mount=type=bind,source=model-cache,target=/workspace/model-cache,readonly \
-    --mount=type=cache,id=three-dgs-pip-cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=cache,id=three-dgs-pip-cache,target=/root/.cache/pip,sharing=locked \
     --mount=type=cache,id=three-dgs-npm-cache,target=/root/.npm,sharing=locked \
     python3 backend/scripts/build_preview_runtime.py \
     --runtime-root /opt/three-dgs \
     --registry-output /opt/three-dgs/runtime/algorithm_registry.generated.json \
-    --weight-cache-root /workspace/model-cache \
+    --weight-cache-root /model-cache \
     --workspace /workspace
 
 COPY alembic.ini alembic.ini

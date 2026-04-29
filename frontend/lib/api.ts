@@ -77,6 +77,26 @@ export const api = {
   deleteProject: (id: string) => request<{ deleted: boolean }>(`/api/projects/${id}`, { method: "DELETE" }),
   createProject: (payload: { name: string; input_type: Project["input_type"]; tags: string[] }) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(payload) }),
+  createCameraSession: (payload: { name?: string; tags?: string[] } = {}) =>
+    request<Project>("/api/camera/sessions", { method: "POST", body: JSON.stringify(payload) }),
+  uploadCameraChunk: (
+    projectId: string,
+    file: Blob,
+    params: { segment_index: number; segment_start_seconds: number; segment_end_seconds?: number | null }
+  ) => {
+    const body = new FormData();
+    body.append("file", file, `camera-segment-${String(params.segment_index).padStart(4, "0")}.webm`);
+    const search = new URLSearchParams({
+      segment_index: String(params.segment_index),
+      segment_start_seconds: String(params.segment_start_seconds)
+    });
+    if (params.segment_end_seconds !== undefined && params.segment_end_seconds !== null) {
+      search.set("segment_end_seconds", String(params.segment_end_seconds));
+    }
+    return request<{ media: MediaAsset; task: Task }>(`/api/projects/${projectId}/camera/chunks?${search.toString()}`, { method: "POST", body });
+  },
+  finishCameraSession: (projectId: string) =>
+    request<Project>(`/api/projects/${projectId}/camera/finish`, { method: "POST" }),
   uploadMedia: (projectId: string, file: File) => {
     const body = new FormData();
     body.append("file", file);
@@ -96,6 +116,12 @@ export const api = {
   feedback: (payload: { title: string; content: string; project_id?: string }) =>
     request<Record<string, unknown>>("/api/feedback", { method: "POST", body: JSON.stringify(payload) })
 };
+
+export function projectEventsUrl(projectId: string): string {
+  const token = getToken();
+  const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${API_BASE}/api/projects/${projectId}/events${suffix}`;
+}
 
 export function artifactUrl(path: string): string {
   if (path.startsWith("http")) return path;

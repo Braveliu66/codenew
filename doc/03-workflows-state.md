@@ -80,9 +80,10 @@ sequenceDiagram
 
 1. 前端请求摄像头权限。
 2. 前端将视频帧按固定频率发送到后端或实时 Worker。
-3. Worker 使用 Stream3R 流式更新粗模型。
-4. 系统周期性生成 `preview_live.spz` 或增量块。
-5. Viewer 收到版本更新后刷新模型。
+3. 前端使用 MediaRecorder 每 5 秒上传一个视频窗口。
+4. API 创建 `preview_camera_tasks` 任务，camera-worker 使用 LingBot-Map streaming 模式生成窗口级点云。
+5. Worker 将窗口级点云转换为 `preview_segment_*.spz`，写入 `preview_spz_segment` artifact。
+6. Viewer 通过 SSE 收到 `preview_segment_ready` 后拉取新增 segment 并追加渲染；未完成时间段显示为灰色占位。
 
 ## 5. 精细重建流程
 
@@ -178,5 +179,5 @@ sequenceDiagram
 - worker 接手后进入 `running`，并写入 `worker_id`、`current_stage`、`started_at`。
 - 算法环境失败时进入 `failed`，项目进入 `FAILED`，`artifacts` 表不新增成功产物。
 - 只有真实非空 `preview.spz` 上传成功后，任务才进入 `succeeded`，项目进入 `PREVIEW_READY`。
-- viewer config 只有存在 `preview_spz` artifact 时返回 `ready`，否则返回 `unavailable`。
+- viewer config 存在 `preview_spz` 时返回 `mode=single`；存在 `preview_spz_segment` 时返回 `mode=progressive` 和 segment 列表；都不存在时返回 `unavailable`。
 - 当前取消接口只持久化 `canceled` 状态；正在执行的外部算法进程中断和临时目录清理属于后续增强。

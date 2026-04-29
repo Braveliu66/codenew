@@ -127,7 +127,10 @@ export default function ProjectDetailPage() {
             {project ? <span className={`status-pill ${project.status}`}>{projectStatusLabel(project.status)}</span> : null}
           </div>
           <div className="panel-body scrollable" style={{ padding: 0 }}>
-            <SplatViewer modelUrl={viewer?.status === "ready" ? viewer.model_url : null} />
+            <SplatViewer
+              modelUrl={viewer?.status === "ready" ? viewer.model_url : null}
+              segments={viewer?.status === "ready" ? viewer.segments : undefined}
+            />
           </div>
         </div>
 

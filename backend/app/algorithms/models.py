@@ -173,8 +173,8 @@ class PreviewTaskRequest:
         if missing:
             raise ValueError(f"Missing required preview task fields: {', '.join(missing)}")
         input_type = str(data["input_type"])
-        if input_type not in {"images", "video"}:
-            raise ValueError("Preview input_type must be 'images' or 'video'")
+        if input_type not in {"images", "video", "camera"}:
+            raise ValueError("Preview input_type must be 'images', 'video', or 'camera'")
         return cls(
             task_id=str(data["task_id"]),
             project_id=str(data["project_id"]),

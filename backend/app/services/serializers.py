@@ -113,7 +113,7 @@ def task_progress_range(task: models.Task) -> tuple[int, int]:
         return (5, 15)
     if stage == "video_frame_extraction":
         return (20, 30)
-    if stage == "video_lingbot_map":
+    if stage in {"video_lingbot_map", "camera_lingbot_map"}:
         return (35, 90)
     if stage == "geometry_litevggt":
         return (35, 55)

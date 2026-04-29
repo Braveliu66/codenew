@@ -147,7 +147,7 @@ def media_stats(db: Session, project: models.Project) -> dict[str, Any]:
 
 def validate_preview_inputs(project: models.Project, options: dict[str, Any] | None = None) -> dict[str, Any]:
     settings = get_settings()
-    min_frames = 1 if project.input_type == "images" else settings.preview_min_input_frames
+    min_frames = 1 if project.input_type in {"images", "camera"} else settings.preview_min_input_frames
     max_frames = settings.preview_max_input_frames
     requested_max = int((options or {}).get("max_preview_frames") or max_frames)
     if requested_max < min_frames:
@@ -178,7 +178,18 @@ def validate_preview_inputs(project: models.Project, options: dict[str, Any] | N
             "min_input_frames": min_frames,
             "max_input_frames": max_frames,
         }
-    raise ValueError("camera preview is not implemented")
+    if project.input_type == "camera":
+        video_count = sum(1 for item in media if item.kind == "video")
+        if video_count < 1:
+            raise ValueError("camera preview requires at least one recorded video chunk")
+        return {
+            "input_type": "camera",
+            "available_input_frames": None,
+            "selected_input_frames": requested_max,
+            "min_input_frames": min_frames,
+            "max_input_frames": max_frames,
+        }
+    raise ValueError("unsupported preview input type")
 
 
 def create_preview_task(db: Session, project: models.Project, options: dict[str, Any] | None = None) -> models.Task:
@@ -188,11 +199,13 @@ def create_preview_task(db: Session, project: models.Project, options: dict[str,
     options["max_preview_frames"] = preview_inputs["selected_input_frames"]
     options.setdefault("min_preview_frames", preview_inputs["min_input_frames"])
     options.setdefault("input_frame_policy", preview_inputs)
-    if project.input_type == "video":
+    if project.input_type in {"video", "camera"}:
         options.setdefault("preview_pipeline", "lingbot_map_spark")
         if settings.video_preview_target_frames is not None:
             options.setdefault("target_frame_count", settings.video_preview_target_frames)
-        options.setdefault("video_preview_mode", settings.video_preview_mode)
+        options.setdefault("video_preview_mode", "streaming" if project.input_type == "camera" else settings.video_preview_mode)
+        if project.input_type == "camera":
+            options.setdefault("progressive", True)
     else:
         options.setdefault("preview_pipeline", settings.preview_default_pipeline)
     task = models.Task(

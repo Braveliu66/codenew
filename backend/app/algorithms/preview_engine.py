@@ -47,16 +47,17 @@ class PreviewEngine:
         skipped: list[SkippedStage] = []
         requirements: list[AlgorithmRequirement] = []
 
-        if request.input_type == "video":
+        if request.input_type in {"video", "camera"}:
             pipeline = str(request.options.get("preview_pipeline") or "lingbot_map_spark")
             if pipeline != "lingbot_map_spark":
-                raise ValueError("Video preview currently supports only preview_pipeline='lingbot_map_spark'")
-            video_requested_max = min(max(requested_max, video_min_frames), max_frames)
+                raise ValueError("Video and camera preview currently support only preview_pipeline='lingbot_map_spark'")
+            min_preview_frames = 1 if request.input_type == "camera" else video_min_frames
+            video_requested_max = min(max(requested_max, min_preview_frames), max_frames)
             stage = PipelineStage(
-                name="video_lingbot_map",
+                name="camera_lingbot_map" if request.input_type == "camera" else "video_lingbot_map",
                 algorithm="LingBot-Map",
-                role="streaming_video_geometry_preview",
-                reason="video preview uses LingBot-Map for streaming reconstruction before Spark conversion",
+                role="streaming_video_geometry_preview" if request.input_type == "video" else "streaming_camera_geometry_preview",
+                reason=f"{request.input_type} preview uses LingBot-Map for streaming reconstruction before Spark conversion",
                 requires_weights=True,
             )
             stages.append(stage)
@@ -97,11 +98,18 @@ class PreviewEngine:
                     "preview_pipeline": pipeline,
                     "frame_sample_fps": request.options.get("frame_sample_fps"),
                     "target_frame_count": request.options.get("target_frame_count"),
-                    "min_preview_frames": video_min_frames,
+                    "min_preview_frames": min_preview_frames,
                     "max_preview_frames": video_requested_max,
                     "preview_frame_cap": max_frames,
-                    "video_preview_mode": str(request.options.get("video_preview_mode") or settings.video_preview_mode),
+                    "video_preview_mode": str(
+                        request.options.get("video_preview_mode")
+                        or ("streaming" if request.input_type == "camera" else settings.video_preview_mode)
+                    ),
                     "require_real_spz": True,
+                    "progressive": bool(request.options.get("progressive", request.input_type == "camera")),
+                    "segment_index": request.options.get("segment_index"),
+                    "segment_start_seconds": request.options.get("segment_start_seconds"),
+                    "segment_end_seconds": request.options.get("segment_end_seconds"),
                 },
             )
 
@@ -248,12 +256,13 @@ class PreviewEngine:
                 f"Preview input path does not exist: {source_path}",
             )
 
-        if request.input_type == "video":
-            self._emit_progress("video_lingbot_map", 35)
+        if request.input_type in {"video", "camera"}:
+            lingbot_stage = "camera_lingbot_map" if request.input_type == "camera" else "video_lingbot_map"
+            self._emit_progress(lingbot_stage, 35)
             lingbot_result = self._run_stage(
                 request=request,
                 plan=plan,
-                stage_name="video_lingbot_map",
+                stage_name=lingbot_stage,
                 algorithm="LingBot-Map",
                 command_key="run_preview",
                 spec={
@@ -269,13 +278,13 @@ class PreviewEngine:
             )
             if lingbot_result[1]:
                 return self._failed_from_issue(request, plan, lingbot_result[1], logs)
-            stage_results["video_lingbot_map"] = lingbot_result[0] or {}
+            stage_results[lingbot_stage] = lingbot_result[0] or {}
             logs.extend(lingbot_result[2])
-            self._emit_progress("video_lingbot_map", 90)
+            self._emit_progress(lingbot_stage, 90)
             preview_ply = (
-                self._artifact_path(stage_results["video_lingbot_map"], "preview_ply")
-                or self._artifact_path(stage_results["video_lingbot_map"], "point_cloud")
-                or self._artifact_path(stage_results["video_lingbot_map"], "output_ply")
+                self._artifact_path(stage_results[lingbot_stage], "preview_ply")
+                or self._artifact_path(stage_results[lingbot_stage], "point_cloud")
+                or self._artifact_path(stage_results[lingbot_stage], "output_ply")
             )
             if preview_ply is None:
                 return self._failed(
@@ -295,7 +304,11 @@ class PreviewEngine:
                     "pipeline": "lingbot_map_spark",
                     "preview_pipeline": "lingbot_map_spark",
                     "geometry_algorithm": "LingBot-Map",
-                    **(stage_results["video_lingbot_map"].get("metrics") or {}),
+                    "progressive": bool(plan.pipeline_options.get("progressive")),
+                    "segment_index": plan.pipeline_options.get("segment_index"),
+                    "segment_start_seconds": plan.pipeline_options.get("segment_start_seconds"),
+                    "segment_end_seconds": plan.pipeline_options.get("segment_end_seconds"),
+                    **(stage_results[lingbot_stage].get("metrics") or {}),
                 },
             )
 
@@ -428,7 +441,9 @@ class PreviewEngine:
         preview_ply: str,
         metrics_extra: dict[str, Any],
     ) -> TaskExecutionResult:
-        spz_path = request.work_dir / "preview" / "preview.spz"
+        segment_index = metrics_extra.get("segment_index")
+        file_name = f"preview_segment_{int(segment_index):04d}.spz" if segment_index is not None else "preview.spz"
+        spz_path = request.work_dir / "preview" / file_name
         self._emit_progress("spz_conversion", 92)
         spz_result = self._run_stage(
             request=request,
@@ -464,8 +479,17 @@ class PreviewEngine:
                 {
                     "kind": "preview_spz",
                     "path": preview_spz,
-                    "object_uri": f"{request.output_prefix.rstrip('/')}/preview.spz",
+                    "object_uri": f"{request.output_prefix.rstrip('/')}/{file_name}",
                     "file_size": Path(preview_spz).stat().st_size,
+                    "file_name": file_name,
+                    "metadata": {
+                        "progressive": bool(metrics_extra.get("progressive")),
+                        "segment_index": segment_index,
+                        "segment_start_seconds": metrics_extra.get("segment_start_seconds"),
+                        "segment_end_seconds": metrics_extra.get("segment_end_seconds"),
+                        "lod": metrics_extra.get("lod", 0),
+                        "estimated_splats": metrics_extra.get("point_count"),
+                    },
                 }
             ],
             metrics={

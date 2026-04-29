@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from backend.app.core.security import hash_password
 from backend.app.db import models
 from backend.app.db.session import SessionLocal, configure_database, init_database
 from backend.app.main import create_app, queue_dependency
@@ -174,6 +175,78 @@ class EngineeringBackendTests(unittest.TestCase):
             self.assertEqual(task.status_code, 200, task.text)
             self.assertEqual(task.json()["options"]["preview_pipeline"], "lingbot_map_spark")
             self.assertEqual(fake_queue.enqueued, [(task.json()["id"], "video")])
+
+    def test_camera_chunk_creates_segment_preview_task(self) -> None:
+        fake_queue = FakeQueue()
+        with self.make_client(fake_queue) as client:
+            token = self.register(client, "camera-preview")
+            session = client.post(
+                "/api/camera/sessions",
+                json={"name": "camera", "tags": ["test"]},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(session.status_code, 200, session.text)
+            self.assertEqual(session.json()["input_type"], "camera")
+
+            chunk = client.post(
+                f"/api/projects/{session.json()['id']}/camera/chunks"
+                "?segment_index=2&segment_start_seconds=10&segment_end_seconds=15",
+                files={"file": ("chunk.webm", b"real camera bytes", "video/webm")},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+            self.assertEqual(chunk.status_code, 200, chunk.text)
+            task = chunk.json()["task"]
+            self.assertEqual(task["options"]["preview_pipeline"], "lingbot_map_spark")
+            self.assertTrue(task["options"]["progressive"])
+            self.assertEqual(task["options"]["segment_index"], 2)
+            self.assertEqual(fake_queue.enqueued, [(task["id"], "camera")])
+
+    def test_viewer_config_returns_progressive_segments(self) -> None:
+        with SessionLocal() as db:
+            user = models.User(username="segment-user", password_hash=hash_password("secret123"), role="user")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            project = create_project(db, user, {"name": "segments", "input_type": "camera", "tags": []})
+            project_id = project.id
+            task = models.Task(project_id=project.id, type="preview", status="succeeded", progress=100)
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            source = TEST_TMP_ROOT / f"segment-{uuid.uuid4().hex}.spz"
+            source.write_bytes(b"spz")
+            storage = ObjectStorage()
+            object_uri = storage.put_file(f"users/{user.id}/projects/{project.id}/preview/preview_segment_0000.spz", source)
+            db.add(
+                models.Artifact(
+                    project_id=project.id,
+                    task_id=task.id,
+                    kind="preview_spz_segment",
+                    object_uri=object_uri,
+                    file_name="preview_segment_0000.spz",
+                    file_size=source.stat().st_size,
+                    artifact_metadata={
+                        "segment_index": 0,
+                        "segment_start_seconds": 0,
+                        "segment_end_seconds": 5,
+                        "progressive": True,
+                    },
+                )
+            )
+            db.commit()
+
+        with self.make_client() as client:
+            login = client.post("/api/auth/login", json={"username": "segment-user", "password": "secret123"})
+            self.assertEqual(login.status_code, 200, login.text)
+            response = client.get(
+                f"/api/projects/{project_id}/viewer-config",
+                headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["mode"], "progressive")
+            self.assertEqual(payload["segments"][0]["segment_index"], 0)
 
     def test_preview_task_caps_selected_image_frames_at_800(self) -> None:
         with SessionLocal() as db:

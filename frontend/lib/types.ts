@@ -89,10 +89,25 @@ export interface Artifact {
   created_at: string;
 }
 
+export interface ViewerSegment {
+  artifact_id: string;
+  model_url: string;
+  format: "spz";
+  segment_index: number;
+  segment_start_seconds?: number | null;
+  segment_end_seconds?: number | null;
+  lod?: number | null;
+  estimated_splats?: number | null;
+  file_size?: number | null;
+}
+
 export interface ViewerConfig {
   status: "ready" | "unavailable";
+  mode?: "single" | "progressive";
   artifact_id?: string;
   model_url?: string | null;
+  segments?: ViewerSegment[];
+  progressive?: boolean;
   format?: "spz";
   message?: string;
 }

@@ -42,7 +42,7 @@ flowchart LR
     WorkerN --> Adapters
 
     Adapters --> PreviewImage["图片极速预览\n(EDGS + LiteVGGT)"]
-    Adapters --> StreamRT["视频/实时流极速预览\n(Stream3R / LiteVGGT)"]
+    Adapters --> StreamRT["视频/实时流极速预览\n(LingBot-Map)"]
     Adapters --> FineEngine["精细合成引擎\n(Faster‑GS + FastGS + Deblurring‑3DGS\n+ 3DGS‑LM + MeshSplatting)"]
     Adapters --> LODGen["多级 LOD 生成\n(EcoSplat + RAP)"]
 
@@ -71,21 +71,21 @@ flowchart LR
 | **位姿估计（小规模）** | [MASt3R](https://github.com/naver/mast3r) (ECCV 2024)                                                         | 稠密匹配、度量尺度，生态丰富，适用于 ≤200 张图片                        | CC BY‑NC‑SA 4.0                     |
 | **位姿估计（大规模）** | [LiteVGGT](https://github.com/GarlicBa/LiteVGGT-repo) (arXiv 2025)                                            | 几何感知令牌合并，10× 加速，支持 1000+ 张图片，127s 完成 1000 帧        | Apache‑2.0                          |
 | **图片极速预览**       | [EDGS](https://github.com/CompVis/EDGS) (CVPR 2026)                                                           | 密集初始化替代增稠，仅需 60% splats，训练快至 11s                        | Apache‑2.0                          |
-| **视频/实时流极速重建** | [Stream3R](https://github.com/NIRVANALAN/STream3R) 或 [LiteVGGT](https://github.com/GarlicBa/LiteVGGT-repo)   | 纯前馈流式架构，单帧 ≤30ms，无需全局优化，输出稀疏点云与位姿             | MIT / Apache‑2.0                    |
+| **视频/实时流极速重建** | [LingBot‑Map](https://github.com/Robbyant/lingbot-map)                                                       | streaming/windowed 推理，输出窗口级点云与位姿，可生成增量 SPZ 片段       | Apache‑2.0                          |
 | **精细重建主框架**     | [Faster‑GS](https://github.com/nerficg-project/faster-gaussian-splatting) (CVPR 2026) 合成引擎                | 混合 MCMC 增稠/剪枝、融合反向传播，5× 加速，模块化                       | Apache‑2.0 (基础)                   |
 | **精细训练加速策略**   | [FastGS](https://github.com/fastgs/FastGS) (CVPR 2026) (注入)                                                 | 多视角一致性剪枝，3× 快于 DashGaussian，无缝集成 Faster‑GS               | MIT                                 |
 | **模糊输入增强**       | [Deblurring‑3DGS](https://github.com/benhenryL/Deblurring-3D-Gaussian-Splatting) (ECCV 2024) (钩子)           | 训练时建模模糊核，推理时清晰输出                                         | 原始 Inria 3DGS 许可证 (非商业)     |
 | **精细化 finetune**    | [3DGS‑LM](https://github.com/lukasHoel/3DGS-LM) (ICCV 2025) (替换优化器)                                     | Levenberg‑Marquardt 优化器，JVP kernel，提升 PSNR 0.5~1dB               | MIT                                 |
 | **Mesh 导出**          | [MeshSplatting](https://github.com/meshsplatting/mesh-splatting) (CVPR 2026) (同进程)                         | 可微分不透明 Mesh 渲染，复用合成引擎 CUDA 上下文                         | Apache‑2.0 (受原始 3DGS 非商业限制) |
 | **无位姿稀疏视角增强** | [FreeSplatter](https://github.com/TencentARC/FreeSplatter) (ICCV 2025)                                        | 无标定直接预测 3DGS，适配极稀疏视角                                     | Apache‑2.0 (核心代码)               |
-| **长视频闭环优化**     | [LingBot‑Map](https://github.com/Robbyant/lingbot-map) + [MASt3R](https://github.com/naver/mast3r) + [Pi3](https://github.com/yyfz/Pi3) (可选) | 流式位姿+回环检测+排列等变一致性优化，仅用于精细重建长视频场景            | LingBot‑Map 待定; MASt3R CC BY‑NC‑SA; Pi3 MIT |
+| **长视频闭环优化**     | [LingBot‑Map](https://github.com/Robbyant/lingbot-map) + [MASt3R](https://github.com/naver/mast3r) + [Pi3](https://github.com/yyfz/Pi3) (可选) | 流式位姿+回环检测+排列等变一致性优化，仅用于精细重建长视频场景            | LingBot‑Map Apache‑2.0; MASt3R CC BY‑NC‑SA; Pi3 MIT |
 | **LOD 生成**           | [EcoSplat](https://github.com/KAIST-VICLab/EcoSplat) (CVPR 2026) + RAP                                      | primitive_ratio 控制 splat 数量，输出多级 .rad                           | MIT / RAP 许可证                    |
 | **Web 渲染**           | [Spark 2.0](https://github.com/sparkjsdev/spark)                                                              | 连续 LOD，虚拟显存，流式加载，自适应性能                                 | MIT                                 |
 
 **位姿估计的动态选择策略**：
 - 图片数量 ≤ 200：使用 **MASt3R**，精度最高，配对匹配可接受。
 - 图片数量 > 200 且 ≤ 2000：使用 **LiteVGGT**，单次前向推理完成全局位姿，避免 O(n²) 匹配爆炸。
-- 视频/实时流：极速预览使用 **Stream3R** 或 **LiteVGGT** 直接回归点云与位姿，不进行稠密匹配。
+- 视频/实时流：极速预览使用 **LingBot‑Map** streaming/windowed 模式生成点云与位姿，再转换为 Spark-SPZ。
 
 ---
 
@@ -112,10 +112,10 @@ flowchart LR
 |----------------------|-------------------------------------------|-----------|--------------------------------------------------------------|
                                        |
 | 图片 (含 800+) | LiteVGGT                                | EDGS      | 大规模位姿加速，EDGS 直接利用 LiteVGGT 密集点云初始化         |
-| 视频 / 实时摄像头    | Stream3R         | -         | 前馈回归直接输出粗 splat，无需额外训练                       |
+| 视频 / 实时摄像头    | LingBot‑Map      | -         | 按视频窗口或摄像头分片输出粗 splat，无需额外训练              |
 
-**为什么视频极速预览不采用 LingBot‑Map ↔ MASt3R ↔ Pi3 融合？**  
-融合方案精度高、适合长序列，但其串联架构导致延迟累加，无法满足实时预览的 ≥20 fps 要求。因此，仅为精细重建中的长视频场景保留此融合，极速管线选用极致轻量的 Stream3R/LiteVGGT。
+**为什么极速预览只使用 LingBot‑Map 单算法？**  
+LingBot‑Map 已覆盖视频和实时摄像头的 streaming/windowed 粗重建能力；MASt3R/Pi3 仍只作为长视频精细重建前的可选全局优化，避免把高延迟闭环优化放进实时预览路径。
 
 ### 4.3 多级 LOD 与自适应渲染
 
@@ -129,8 +129,8 @@ flowchart LR
 | 管线环节             | 固定算法 / 工具                                                         |
 |----------------------|-------------------------------------------------------------------------|
 | 图片极速预览         | `位姿估计（ LiteVGGT）` → `EDGS` → 产物 .spz + L1.rad        |
-| 视频极速预览         | `Stream3R` 或 `LiteVGGT` 直接回归，无需单独 3DGS 训练                 |
-| 实时摄像头粗重建     | `Stream3R` 流式更新                                                    |
+| 视频极速预览         | `LingBot‑Map` → `Spark-SPZ`                                            |
+| 实时摄像头粗重建     | `LingBot‑Map` streaming → 增量 `preview_segment_*.spz`                 |
 | 精细重建主引擎       | `精细合成引擎（Faster‑GS + FastGS + Deblurring‑3DGS + 3DGS‑LM）`       |
 | 稀疏视角初始化       | `FreeSplatter`（自动启用）                                              |
 | 长视频精细重建前优化 | `LingBot‑Map + MASt3R + Pi3`（可选，需手动或按规则启用）               |
@@ -179,7 +179,7 @@ sequenceDiagram
 
     U->>FE: 上传视频
     FE->>API: 创建项目并上传
-    W->>W: 使用 Stream3R 流式处理
+    W->>W: 使用 LingBot-Map 按时间窗口重建
     W->>W: 每 N 帧更新 splat，输出 preview.spz
     W->>ObjectStore: 保存产物
     FE->>V: 加载预览模型
@@ -187,7 +187,7 @@ sequenceDiagram
 
 ### 6.3 实时摄像头粗重建
 
-同前版文档，使用 Stream3R 流式更新，周期性推送新版本 preview_live.spz。
+前端使用 MediaRecorder 按时间窗口上传摄像头分片，camera-worker 使用 LingBot-Map streaming 模式处理，每个窗口生成一个 `preview_segment_*.spz`，Viewer 通过 SSE 收到 `preview_segment_ready` 后增量加载。
 
 ### 6.4 精细重建
 
@@ -274,7 +274,7 @@ COMPLETED → MESH_EXPORT_RUNNING → MESH_EXPORT_READY
 
 - **精细合成引擎**内部包含 Debblurring‑3DGS 和 MeshSplatting 等组件，它们继承自原始 Inria 3DGS 的非商业许可证。因此整个精细合成引擎在分发时必须标注受该许可证约束，**禁止直接或间接用于商业目的**。
 - **FreeSplatter** 核心代码为 Apache‑2.0，但其依赖的 Hunyuan3D‑1、RMBG‑2.0 模型存在非商业附加限制，集成时需确保合规。
-- **LingBot‑Map** 当前为预印本，未明确许可证，应作为可选模块，默认不启用，待联系作者后决定。
+- **LingBot‑Map** 使用 Apache‑2.0；权重来源和具体文件 URL 需在部署环境中登记或通过 `LINGBOT_WEIGHT_URL` 指定。
 - **MASt3R** 使用 CC BY‑NC‑SA 4.0，符合本系统非商业定位。
 - **LiteVGGT, EDGS, Faster‑GS, FastGS, 3DGS‑LM, EcoSplat, Spark 2.0** 等均为宽松许可证 (MIT/Apache‑2.0)，可放心集成。
 
@@ -284,8 +284,8 @@ COMPLETED → MESH_EXPORT_RUNNING → MESH_EXPORT_READY
 
 1. **图片极速预览**：
    - 上传 图片,使用 LiteVGGT + EDGS，总耗时 ≤ 3 分钟，产出同样可用。
-2. **视频极速预览**：1080p 30s 视频，Stream3R 以 ≥15 fps 更新模型，Viewer 加载后帧率 ≥30fps。
-3. **实时摄像头**：720p 摄像头，Stream3R 以 ≥12 fps 更新，延迟 <1s。
+2. **视频极速预览**：1080p 30s 视频，LingBot-Map 生成非空 `preview.spz`，Viewer 加载后以 90 FPS 为目标自适应渲染。
+3. **实时摄像头**：720p 摄像头按窗口上传，LingBot-Map 生成增量 SPZ segment，Viewer 可在任务完成前浏览已完成片段。
 4. **精细重建**：
    - 正常素材：合成引擎自动训练，产出 `final.ply`、`final_web.spz` 和 LOD .rad 树。
    - 模糊/稀疏视角：自动启用 Deblurring 或 FreeSplatter 增强，最终 PSNR 显著优于未增强 baseline。

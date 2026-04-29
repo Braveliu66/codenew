@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Boxes,
+  Camera,
   ChevronDown,
   Cpu,
   FolderKanban,
@@ -22,6 +23,7 @@ import type { Task, User } from "@/lib/types";
 
 const nav = [
   { href: "/", label: "新建项目", icon: Home },
+  { href: "/camera", label: "实时视频", icon: Camera },
   { href: "/projects", label: "项目控制台", icon: FolderKanban }
 ];
 

@@ -12,7 +12,7 @@ from backend.app.algorithms.registry import AlgorithmRegistryEntry
 from backend.app.algorithms.runner import RealAlgorithmCommandRunner
 from backend.app.main import current_gpu_resources, parse_nvidia_smi_gpus
 from backend.app.services.serializers import task_to_dict
-from backend.scripts import build_preview_runtime
+from backend.scripts import build_preview_runtime, download_model_weights
 
 
 class RuntimeConfigurationTests(unittest.TestCase):
@@ -164,6 +164,50 @@ class RuntimeConfigurationTests(unittest.TestCase):
         self.assertLess(payload["progress"], 100)
         self.assertIsNotNone(payload["eta_seconds"])
         self.assertLessEqual(payload["eta_seconds"], 60)
+
+    def test_weight_downloader_reuses_complete_cached_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = download_model_weights.MODEL_WEIGHTS["litevggt"].target_path(build_preview_runtime.Path(tmpdir))
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b"cached")
+
+            with (
+                patch.dict("os.environ", {}, clear=True),
+                patch.object(download_model_weights, "remote_content_length", return_value=len(b"cached")),
+                patch.object(download_model_weights, "download_with_resume") as downloader,
+            ):
+                result = download_model_weights.ensure_model_weight(
+                    download_model_weights.MODEL_WEIGHTS["litevggt"],
+                    build_preview_runtime.Path(tmpdir),
+                    "https://example.invalid",
+                )
+
+            self.assertEqual(result, target)
+            downloader.assert_not_called()
+
+    def test_weight_downloader_resumes_part_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict("os.environ", {}, clear=True):
+                root = build_preview_runtime.Path(tmpdir)
+                model = download_model_weights.MODEL_WEIGHTS["lingbot-map"]
+                target = model.target_path(root)
+                target.parent.mkdir(parents=True)
+                part = target.with_suffix(target.suffix + ".part")
+                part.write_bytes(b"abc")
+
+                def fake_download(_: str, part_path: build_preview_runtime.Path, __: int | None) -> None:
+                    self.assertEqual(part_path.read_bytes(), b"abc")
+                    with part_path.open("ab") as file:
+                        file.write(b"def")
+
+                with (
+                    patch.object(download_model_weights, "remote_content_length", return_value=6),
+                    patch.object(download_model_weights, "download_with_resume", side_effect=fake_download),
+                ):
+                    result = download_model_weights.ensure_model_weight(model, root, "https://example.invalid")
+
+                self.assertEqual(result.read_bytes(), b"abcdef")
+                self.assertFalse(part.exists())
 
 
 if __name__ == "__main__":

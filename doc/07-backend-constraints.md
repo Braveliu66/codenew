@@ -39,11 +39,11 @@ Worker 启动时应检查登记信息和本地环境是否一致。
 所有第三方模型权重必须先进入项目根目录的本地缓存，再由 Docker 构建脚本复制到运行镜像。后续接入任何新模型都按这个规则处理。
 
 - 本地缓存路径统一为 `model-cache/<model-name>/...`。
-- 当前 LiteVGGT 权重路径为 `model-cache/litevggt/te_dict.pt`，运行镜像内路径为 `/opt/three-dgs/models/litevggt/te_dict.pt`。
-- 构建脚本必须先检查本地缓存；只有缓存缺失时才允许按登记的 `weight_source` 下载。
+- 当前 LiteVGGT 权重路径为 `model-cache/litevggt/te_dict.pt`，LingBot-Map 权重路径为 `model-cache/lingbot-map/lingbot-map-long.pt`。
+- Docker build 不再远端下载大权重；worker 启动预检必须先检查共享 `model-cache`，缺失时使用 `.part` 文件和 HTTP Range 断点续传下载。
 - 大权重文件不得提交 Git；只保留目录占位或说明文件，权重扩展名由 `.gitignore` 忽略。
-- 新增模型时必须同步更新下载脚本、构建脚本、Dockerfile/Compose 复制路径和 `algorithm_registry` 的 `weight_source`/`weight_path`。
-- 不允许只把权重下载到容器临时目录却不回写项目缓存，否则下次构建会重复下载。
+- 新增模型时必须同步更新下载脚本、构建脚本、Dockerfile/Compose 挂载路径和 `algorithm_registry` 的 `weight_source`/`weight_path`。
+- 不允许只把权重下载到容器临时目录却不回写项目缓存，否则下次启动会重复下载。
 
 ## 4. 多 GPU 与高并发
 

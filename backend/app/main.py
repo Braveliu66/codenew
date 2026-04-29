@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,6 +9,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -457,6 +460,88 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return task_to_dict(task)
 
+    @app.post("/api/camera/sessions")
+    def create_camera_session(
+        payload: dict[str, Any] | None = None,
+        user: models.User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        project = create_project(
+            db,
+            user,
+            {
+                "name": str((payload or {}).get("name") or "Realtime camera reconstruction"),
+                "input_type": "camera",
+                "tags": (payload or {}).get("tags") or ["camera", "lingbot-map"],
+            },
+        )
+        return project_to_dict(project)
+
+    @app.post("/api/projects/{project_id}/camera/chunks")
+    async def upload_camera_chunk(
+        project_id: str,
+        file: UploadFile = File(...),
+        segment_index: int = Query(default=0),
+        segment_start_seconds: float = Query(default=0),
+        segment_end_seconds: float | None = Query(default=None),
+        user: models.User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+        storage: ObjectStorage = Depends(storage_dependency),
+        queue: PreviewTaskQueue = Depends(queue_dependency),
+    ) -> dict[str, Any]:
+        project = get_project_for_user(db, user, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project not found")
+        if project.input_type != "camera":
+            raise HTTPException(status_code=400, detail="project is not a camera session")
+        content = await file.read()
+        try:
+            asset = save_upload(
+                db,
+                storage,
+                user,
+                project,
+                file.filename or f"camera-segment-{segment_index:04d}.webm",
+                content,
+                file.content_type or "video/webm",
+            )
+            task = create_preview_task(
+                db,
+                project,
+                {
+                    "media_asset_id": asset.id,
+                    "preview_pipeline": "lingbot_map_spark",
+                    "video_preview_mode": "streaming",
+                    "progressive": True,
+                    "segment_index": segment_index,
+                    "segment_start_seconds": segment_start_seconds,
+                    "segment_end_seconds": segment_end_seconds,
+                    "max_preview_frames": get_settings().preview_max_input_frames,
+                    "min_preview_frames": 1,
+                },
+            )
+            queue.enqueue_preview(task.id, input_type="camera")
+        except (ValueError, ObjectStorageError, TaskQueueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"media": media_to_dict(asset), "task": task_to_dict(task)}
+
+    @app.post("/api/projects/{project_id}/camera/finish")
+    def finish_camera_session(
+        project_id: str,
+        user: models.User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        project = get_project_for_user(db, user, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project not found")
+        if project.input_type != "camera":
+            raise HTTPException(status_code=400, detail="project is not a camera session")
+        project.status = "PREVIEW_READY"
+        project.updated_at = models.utc_now()
+        db.commit()
+        db.refresh(project)
+        return project_to_dict(project)
+
     @app.post("/api/projects/{project_id}/tasks/fine")
     def create_fine_task_endpoint(
         project_id: str,
@@ -540,6 +625,54 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="project not found")
         return {"artifacts": [artifact_to_dict(item) for item in list_artifacts(db, project)]}
 
+    @app.get("/api/projects/{project_id}/events")
+    def project_events(
+        project_id: str,
+        token: str | None = Query(default=None),
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    ):
+        payload = decode_access_token(credentials.credentials) if credentials else (decode_access_token(token) if token else None)
+        if not payload:
+            raise HTTPException(status_code=401, detail="authentication required")
+        user_id = str(payload["sub"])
+
+        async def stream():
+            seen_artifacts: set[str] = set()
+            last_task_state: dict[str, tuple[str, int, str]] = {}
+            for _ in range(1800):
+                with SessionLocal() as event_db:
+                    user = event_db.get(models.User, user_id)
+                    if not user:
+                        yield sse_event("error", {"message": "user not found"})
+                        return
+                    project = get_project_for_user(event_db, user, project_id)
+                    if not project:
+                        yield sse_event("error", {"message": "project not found"})
+                        return
+                    detail = project_detail(event_db, project)
+                    yield sse_event("project_snapshot", detail)
+                    for task in detail.get("tasks", []):
+                        task_id = str(task["id"])
+                        state = (str(task["status"]), int(task["progress"]), str(task.get("current_stage") or ""))
+                        if last_task_state.get(task_id) != state:
+                            last_task_state[task_id] = state
+                            event_name = {
+                                "succeeded": "task_succeeded",
+                                "failed": "task_failed",
+                                "canceled": "task_canceled",
+                            }.get(state[0], "task_progress")
+                            yield sse_event(event_name, task)
+                    for artifact in detail.get("artifacts", []):
+                        artifact_id = str(artifact["id"])
+                        if artifact_id in seen_artifacts:
+                            continue
+                        seen_artifacts.add(artifact_id)
+                        event_name = "preview_segment_ready" if artifact.get("kind") == "preview_spz_segment" else "artifact_created"
+                        yield sse_event(event_name, artifact)
+                await asyncio.sleep(1)
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
     @app.get("/api/artifacts/{artifact_id}/download-url")
     def artifact_download_url(
         artifact_id: str,
@@ -596,6 +729,41 @@ def create_app() -> FastAPI:
         project = get_project_for_user(db, user, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="project not found")
+        artifacts = list_artifacts(db, project)
+        segments = [
+            artifact
+            for artifact in artifacts
+            if artifact.kind == "preview_spz_segment"
+        ]
+        if segments:
+            segment_payloads = []
+            for segment in sorted(
+                segments,
+                key=lambda item: int((item.artifact_metadata or {}).get("segment_index") or 0),
+            ):
+                presigned = storage.presigned_url(segment.object_uri)
+                token = create_artifact_token(segment.id)
+                metadata = segment.artifact_metadata or {}
+                segment_payloads.append(
+                    {
+                        "artifact_id": segment.id,
+                        "model_url": presigned or f"/api/artifacts/{segment.id}/file?token={token}",
+                        "format": "spz",
+                        "segment_index": int(metadata.get("segment_index") or 0),
+                        "segment_start_seconds": metadata.get("segment_start_seconds"),
+                        "segment_end_seconds": metadata.get("segment_end_seconds"),
+                        "lod": metadata.get("lod", 0),
+                        "estimated_splats": metadata.get("estimated_splats"),
+                        "file_size": segment.file_size,
+                    }
+                )
+            return {
+                "status": "ready",
+                "mode": "progressive",
+                "format": "spz",
+                "segments": segment_payloads,
+                "progressive": True,
+            }
         preview = latest_preview_artifact(db, project)
         if not preview:
             return {"status": "unavailable", "message": "No real preview_spz artifact is available", "model_url": None}
@@ -603,6 +771,7 @@ def create_app() -> FastAPI:
         token = create_artifact_token(preview.id)
         return {
             "status": "ready",
+            "mode": "single",
             "artifact_id": preview.id,
             "model_url": presigned or f"/api/artifacts/{preview.id}/file?token={token}",
             "format": "spz",
@@ -650,3 +819,7 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+def sse_event(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"

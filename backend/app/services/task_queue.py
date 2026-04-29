@@ -11,6 +11,7 @@ class PreviewTaskQueue:
     queue_name = "preview_tasks"
     image_queue_name = "preview_image_tasks"
     video_queue_name = "preview_video_tasks"
+    camera_queue_name = "preview_camera_tasks"
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -25,6 +26,9 @@ class PreviewTaskQueue:
     def enqueue_video_preview(self, task_id: str) -> None:
         self.enqueue_preview(task_id, "video")
 
+    def enqueue_camera_preview(self, task_id: str) -> None:
+        self.enqueue_preview(task_id, "camera")
+
     def pop_preview(self, timeout_seconds: int = 5, input_type: str = "images") -> str | None:
         result = self._redis().blpop(self._queue_for_input_type(input_type), timeout=timeout_seconds)
         if not result:
@@ -35,6 +39,8 @@ class PreviewTaskQueue:
     def _queue_for_input_type(self, input_type: str) -> str:
         if input_type == "video":
             return self.video_queue_name
+        if input_type == "camera":
+            return self.camera_queue_name
         if input_type == "images":
             return self.image_queue_name
         return self.queue_name

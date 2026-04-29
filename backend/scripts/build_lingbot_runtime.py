@@ -73,10 +73,13 @@ def resolve_lingbot_weight(weight_cache_root: Path) -> Path:
     for candidate in candidates:
         if candidate.exists() and candidate.stat().st_size > 0:
             return candidate.resolve()
-    raise RuntimeError(
-        "LingBot-Map weight is missing. Place it at "
-        f"{weight_cache_root / 'lingbot-map' / LINGBOT_WEIGHT_FILE} before building."
+    runtime_weight = Path(configured or f"/model-cache/lingbot-map/{LINGBOT_WEIGHT_FILE}")
+    print(
+        "LingBot-Map weight is not embedded during Docker build; "
+        f"worker startup will ensure {runtime_weight}",
+        flush=True,
     )
+    return runtime_weight
 
 
 def install_lingbot_runtime(lingbot: Path) -> None:

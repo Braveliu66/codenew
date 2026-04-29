@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+ARG LINGBOT_CUDA_BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+FROM ${LINGBOT_CUDA_BASE_IMAGE}
 
 SHELL ["/bin/bash", "-lc"]
 WORKDIR /workspace
@@ -65,8 +66,7 @@ RUN --mount=type=cache,id=three-dgs-lingbot-pip-cache,target=/root/.cache/pip,sh
     fi
 
 COPY backend/scripts/build_lingbot_runtime.py backend/scripts/build_lingbot_runtime.py
-RUN --mount=type=bind,source=model-cache,target=/model-cache,readonly \
-    --mount=type=cache,id=three-dgs-lingbot-pip-cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=cache,id=three-dgs-lingbot-pip-cache,target=/root/.cache/pip,sharing=locked \
     --mount=type=cache,id=three-dgs-lingbot-npm-cache,target=/root/.npm,sharing=locked \
     python3 backend/scripts/build_lingbot_runtime.py \
     --runtime-root /opt/three-dgs-lingbot \
