@@ -5,6 +5,7 @@ tmp_py_root/
 tmp_py_test/
 storage/
 .runtime/
+.docker-build-cache/
 frontend/.next/
 frontend/node_modules/
 frontend/out/
@@ -12,3 +13,5 @@ frontend/tsconfig.tsbuildinfo
 model-cache/**/*.pt
 model-cache/**/*.bin
 model-cache/**/*.safetensors
+repo-cache/*
+!repo-cache/.gitkeep

@@ -17,7 +17,7 @@ SPARK_REPO = "https://github.com/sparkjsdev/spark.git"
 LITEVGGT_WEIGHT_REPO = "ZhijianShu/LiteVGGT"
 LITEVGGT_WEIGHT_FILE = "te_dict.pt"
 EDGS_LICENSE = "Non-commercial research and personal use (see EDGS LICENSE.txt)"
-EDGS_WHEEL_BASE_URL = "https://huggingface.co/spaces/CompVis/EDGS/resolve/main/wheels"
+EDGS_WHEEL_REPO_PATH = "spaces/CompVis/EDGS/resolve/main/wheels"
 DEFAULT_TRANSFORMER_ENGINE_VERSION = "2.14.0"
 EDGS_WHEELS = {
     "diff_gaussian_rasterization": "diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl",
@@ -194,7 +194,7 @@ def install_edgs_extension(package: str, source_path: Path) -> None:
         and sys.platform.startswith("linux")
     )
     if mode in {"auto", "wheel"} and can_use_official_wheel:
-        url = f"{EDGS_WHEEL_BASE_URL}/{wheel}"
+        url = edgs_wheel_url(wheel)
         try:
             pip_install([url])
             return
@@ -206,6 +206,11 @@ def install_edgs_extension(package: str, source_path: Path) -> None:
         raise RuntimeError(f"No official EDGS wheel is configured for {package} on this Python/platform")
 
     compile_edgs_extension(package, source_path)
+
+
+def edgs_wheel_url(wheel: str) -> str:
+    endpoint = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com").strip().rstrip("/")
+    return f"{endpoint}/{EDGS_WHEEL_REPO_PATH}/{wheel}"
 
 
 def compile_edgs_extension(package: str, source_path: Path) -> None:

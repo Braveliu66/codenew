@@ -33,13 +33,14 @@ def main() -> int:
     else:
         if repo_path is None or not repo_path.exists():
             raise RuntimeError("Spark/SPZ converter repository is not configured")
-        completed = subprocess.run(
-            ["npm", "run", "assets:compress", "--", str(input_ply.resolve())],
-            cwd=str(repo_path),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        converter_script = repo_path / "scripts" / "compress-to-spz.js"
+        if converter_script.exists():
+            if not shutil.which("node"):
+                raise RuntimeError("node executable is not available for Spark/SPZ conversion")
+            command = ["node", str(converter_script), str(input_ply.resolve())]
+        else:
+            command = ["npm", "run", "assets:compress", "--", str(input_ply.resolve())]
+        completed = subprocess.run(command, cwd=str(repo_path), capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "SPZ conversion command failed")
 

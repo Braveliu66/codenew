@@ -1,33 +1,42 @@
-x-preview-runtime-build: &preview-runtime-build
+x-gpu-runtime-build: &gpu-runtime-build
   context: ..
-  dockerfile: backend/Dockerfile.preview
+  dockerfile: backend/Dockerfile.gpu_runtime
+  cache_from:
+    - type=local,src=../.docker-build-cache/gpu-runtime
+  cache_to:
+    - type=local,dest=../.docker-build-cache/gpu-runtime,mode=max
   args:
-    PREVIEW_CUDA_BASE_IMAGE: ${PREVIEW_CUDA_BASE_IMAGE:-nvidia/cuda:12.6.2-cudnn-devel-ubuntu22.04}
+    GPU_CUDA_BUILD_IMAGE: ${GPU_CUDA_BUILD_IMAGE:-nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04}
+    GPU_CUDA_RUNTIME_IMAGE: ${GPU_CUDA_RUNTIME_IMAGE:-nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04}
     LITEVGGT_COMMIT: 4767c17f8b6f176bb751566e92f60eb885040033
     EDGS_COMMIT: 9a897645eb47c1b24d4f9e4428cd745927bf1ee1
-    SPARK_COMMIT: 915c474795e0c78f7cd1b7f4eb97695028b495c0
-    TRANSFORMER_ENGINE_VERSION: 2.14.0
-    EDGS_EXTENSION_INSTALL_MODE: source
-    HF_ENDPOINT: https://hf-mirror.com
-    PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
-    NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
-
-x-lingbot-runtime-build: &lingbot-runtime-build
-  context: ..
-  dockerfile: backend/Dockerfile.lingbot_preview
-  args:
-    LINGBOT_CUDA_BASE_IMAGE: ${LINGBOT_CUDA_BASE_IMAGE:-nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04}
     LINGBOT_COMMIT: main
     SPARK_COMMIT: 915c474795e0c78f7cd1b7f4eb97695028b495c0
+    TRANSFORMER_ENGINE_VERSION: 2.14.0
+    TORCH_VERSION: 2.8.0
+    TORCHVISION_VERSION: 0.23.0
+    TORCHAUDIO_VERSION: 2.8.0
+    TORCH_CUDA_SUFFIX: cu128
+    TORCH_INDEX_URLS: ${TORCH_INDEX_URLS:-https://mirrors.aliyun.com/pytorch-wheels/cu128,https://download.pytorch.org/whl/cu128}
+    ALGORITHM_REPO_MIRROR_PREFIXES: ${ALGORITHM_REPO_MIRROR_PREFIXES:-}
+    EDGS_EXTENSION_INSTALL_MODE: source
     INSTALL_FLASHINFER: "false"
-    PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
-    NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+    HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+    APT_MIRROR: ${UBUNTU_APT_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/ubuntu}
+    PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
 
 x-api-build: &api-build
   context: ..
   dockerfile: backend/Dockerfile.api
+  cache_from:
+    - type=local,src=../.docker-build-cache/api
+  cache_to:
+    - type=local,dest=../.docker-build-cache/api,mode=max
   args:
     API_BASE_IMAGE: ${API_BASE_IMAGE:-python:3.12-slim}
+    APT_MIRROR: ${DEBIAN_APT_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian}
+    APT_SECURITY_MIRROR: ${DEBIAN_APT_SECURITY_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian-security}
 
 services:
   postgres:
@@ -98,8 +107,8 @@ services:
       - minio
     restart: unless-stopped
   image-worker:
-    image: three-dgs-preview-runtime:local
-    build: *preview-runtime-build
+    image: three-dgs-gpu-runtime:local
+    build: *gpu-runtime-build
     command: sh -lc "python3 -m backend.scripts.ensure_model_weights --models litevggt --cache-root /model-cache && alembic upgrade head && python3 -m backend.workers.preview_worker"
     environment:
       DATABASE_URL: postgresql+psycopg://three_dgs:three_dgs@postgres:5432/three_dgs
@@ -110,7 +119,7 @@ services:
       MINIO_BUCKET: three-dgs
       MINIO_SECURE: "false"
       JWT_SECRET: change-this-in-production
-      ALGORITHM_REGISTRY_PATH: /opt/three-dgs/runtime/algorithm_registry.generated.json
+      ALGORITHM_REGISTRY_PATH: /opt/three-dgs/runtime/image_algorithm_registry.generated.json
       THREE_DGS_STORAGE_ROOT: /workspace/storage
       PREVIEW_MIN_INPUT_FRAMES: "8"
       PREVIEW_MAX_INPUT_FRAMES: "800"
@@ -140,8 +149,8 @@ services:
     restart: unless-stopped
 
   video-worker:
-    image: three-dgs-video-preview-runtime:local
-    build: *lingbot-runtime-build
+    image: three-dgs-gpu-runtime:local
+    build: *gpu-runtime-build
     command: sh -lc "python3 -m backend.scripts.ensure_model_weights --models lingbot-map --cache-root /model-cache && alembic upgrade head && python3 -m backend.workers.preview_worker"
     environment:
       DATABASE_URL: postgresql+psycopg://three_dgs:three_dgs@postgres:5432/three_dgs
@@ -152,7 +161,7 @@ services:
       MINIO_BUCKET: three-dgs
       MINIO_SECURE: "false"
       JWT_SECRET: change-this-in-production
-      ALGORITHM_REGISTRY_PATH: /opt/three-dgs-lingbot/runtime/algorithm_registry.generated.json
+      ALGORITHM_REGISTRY_PATH: /opt/three-dgs/runtime/video_algorithm_registry.generated.json
       THREE_DGS_STORAGE_ROOT: /workspace/storage
       PREVIEW_WORKER_INPUT_TYPE: video
       PREVIEW_MIN_INPUT_FRAMES: "8"
@@ -182,8 +191,8 @@ services:
     restart: unless-stopped
 
   camera-worker:
-    image: three-dgs-video-preview-runtime:local
-    build: *lingbot-runtime-build
+    image: three-dgs-gpu-runtime:local
+    build: *gpu-runtime-build
     command: sh -lc "python3 -m backend.scripts.ensure_model_weights --models lingbot-map --cache-root /model-cache && alembic upgrade head && python3 -m backend.workers.preview_worker"
     environment:
       DATABASE_URL: postgresql+psycopg://three_dgs:three_dgs@postgres:5432/three_dgs
@@ -194,7 +203,7 @@ services:
       MINIO_BUCKET: three-dgs
       MINIO_SECURE: "false"
       JWT_SECRET: change-this-in-production
-      ALGORITHM_REGISTRY_PATH: /opt/three-dgs-lingbot/runtime/algorithm_registry.generated.json
+      ALGORITHM_REGISTRY_PATH: /opt/three-dgs/runtime/video_algorithm_registry.generated.json
       THREE_DGS_STORAGE_ROOT: /workspace/storage
       PREVIEW_WORKER_INPUT_TYPE: camera
       PREVIEW_MIN_INPUT_FRAMES: "1"
@@ -227,6 +236,10 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      cache_from:
+        - type=local,src=../.docker-build-cache/frontend
+      cache_to:
+        - type=local,dest=../.docker-build-cache/frontend,mode=max
       args:
         NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
         NEXT_PUBLIC_API_BASE_URL: http://localhost:8000

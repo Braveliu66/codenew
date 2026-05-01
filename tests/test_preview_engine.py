@@ -111,7 +111,7 @@ class PreviewEngineTests(unittest.TestCase):
                     repo_url="https://github.com/GarlicBa/LiteVGGT-repo",
                     license="MIT",
                     commit_hash="test-command",
-                    weight_source="https://huggingface.co/ZhijianShu/LiteVGGT/resolve/main/te_dict.pt",
+                    weight_source="https://hf-mirror.com/ZhijianShu/LiteVGGT/resolve/main/te_dict.pt",
                     weight_paths=(weight,),
                     enabled=True,
                     source_type="command",

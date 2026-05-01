@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,8 @@ from pathlib import Path
 LITEVGGT_REPO = "https://github.com/GarlicBa/LiteVGGT-repo.git"
 EDGS_REPO = "https://github.com/CompVis/EDGS.git"
 SPARK_REPO = "https://github.com/sparkjsdev/spark.git"
-LITEVGGT_WEIGHT_URL = "https://huggingface.co/ZhijianShu/LiteVGGT/resolve/main/te_dict.pt"
+LITEVGGT_WEIGHT_REPO = "ZhijianShu/LiteVGGT"
+LITEVGGT_WEIGHT_FILE = "te_dict.pt"
 
 
 def main() -> int:
@@ -32,8 +34,8 @@ def main() -> int:
     litevggt = clone_repo(LITEVGGT_REPO, repos_root / "LiteVGGT-repo")
     edgs = clone_repo(EDGS_REPO, repos_root / "EDGS")
     spark = clone_repo(SPARK_REPO, repos_root / "spark")
-    weight_path = models_root / "litevggt" / "te_dict.pt"
-    download_file(LITEVGGT_WEIGHT_URL, weight_path)
+    weight_path = models_root / "litevggt" / LITEVGGT_WEIGHT_FILE
+    download_file(litevggt_weight_url(), weight_path)
 
     if args.install_deps:
         pip_install(litevggt / "requirements.txt")
@@ -53,6 +55,14 @@ def main() -> int:
         litevggt_weight=weight_path,
     )
     return 0
+
+
+def litevggt_weight_url() -> str:
+    configured = os.environ.get("LITEVGGT_WEIGHT_URL")
+    if configured:
+        return configured
+    endpoint = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com").strip().rstrip("/")
+    return f"{endpoint}/{LITEVGGT_WEIGHT_REPO}/resolve/main/{LITEVGGT_WEIGHT_FILE}"
 
 
 def clone_repo(url: str, target: Path) -> Path:

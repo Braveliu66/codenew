@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM node:24-bookworm-slim
 
 WORKDIR /app
@@ -18,7 +19,8 @@ ENV VIEWER_QUALITY_DOWN_FPS=${VIEWER_QUALITY_DOWN_FPS}
 ENV VIEWER_ADAPTIVE_QUALITY=${VIEWER_ADAPTIVE_QUALITY}
 
 COPY package*.json ./
-RUN npm config set registry ${NPM_CONFIG_REGISTRY} && npm ci
+RUN --mount=type=cache,id=three-dgs-frontend-npm-cache,target=/root/.npm,sharing=locked \
+    npm config set registry ${NPM_CONFIG_REGISTRY} && npm ci --cache /root/.npm --prefer-offline
 COPY . .
 RUN if [ "${NEXT_BUILD}" = "true" ]; then npm run build; fi
 

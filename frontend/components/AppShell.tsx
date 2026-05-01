@@ -27,6 +27,8 @@ const nav = [
   { href: "/projects", label: "项目控制台", icon: FolderKanban }
 ];
 
+const RESOURCE_REFRESH_MS = 2000;
+
 type ResourcePayload = {
   cpu?: Record<string, unknown>;
   memory?: Record<string, unknown>;
@@ -74,7 +76,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         });
     };
     load();
-    const timer = window.setInterval(load, 8000);
+    const timer = window.setInterval(load, RESOURCE_REFRESH_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -210,14 +212,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="resource-strip" aria-label="资源状态">
-            <span className="resource-chip"><Cpu size={14} /><span>CPU</span><strong>{resourcePercent(resources.cpu?.usage_percent)}</strong></span>
-            <span className={`resource-chip ${resources.memory?.available ? "" : "warn"}`}>
+            <span className="resource-chip" title={resourceTitle(resources.cpu)}>
+              <Cpu size={14} /><span>CPU</span><strong>{resourcePercent(resources.cpu?.usage_percent)}</strong>
+            </span>
+            <span className={`resource-chip ${resources.memory?.available ? "" : "warn"}`} title={resourceTitle(resources.memory)}>
               <MemoryStick size={14} /><span>RAM</span><strong>{memoryValue(resources.memory)}</strong>
             </span>
-            <span className={`resource-chip ${resources.gpu?.available ? "" : "warn"}`}>
+            <span className={`resource-chip ${resources.gpu?.available ? "" : "warn"}`} title={resourceTitle(resources.gpu)}>
               <Gauge size={14} /><span>GPU</span><strong>{gpuUsageValue(resources.gpu)}</strong>
             </span>
-            <span className="resource-chip warn"><HardDrive size={14} /><span>VRAM</span><strong>{vramValue(resources.gpu)}</strong></span>
+            <span className="resource-chip warn" title={resourceTitle(resources.gpu)}>
+              <HardDrive size={14} /><span>VRAM</span><strong>{vramValue(resources.gpu)}</strong>
+            </span>
           </div>
         </header>
         <main className="main-panel">{children}</main>
@@ -283,6 +289,15 @@ function memoryValue(memory?: Record<string, unknown>): string {
     return `${formatBinaryBytes(used)}/${formatBinaryBytes(total)}`;
   }
   return resourcePercent(memory.usage_percent);
+}
+
+function resourceTitle(resource?: Record<string, unknown>): string | undefined {
+  if (!resource) return undefined;
+  const parts = [
+    typeof resource.source === "string" ? `source: ${resource.source}` : null,
+    typeof resource.message === "string" && resource.message.trim() ? resource.message : null
+  ].filter(Boolean);
+  return parts.length ? parts.join("\n") : undefined;
 }
 
 function formatBinaryBytes(value: number): string {

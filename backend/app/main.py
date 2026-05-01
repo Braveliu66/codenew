@@ -52,6 +52,7 @@ from backend.app.services.resource_monitor import (
     current_cpu_resources,
     current_gpu_resources,
     current_memory_resources,
+    fresh_worker_heartbeats,
     gpu_resources_from_workers,
     parse_nvidia_smi_gpus,
 )
@@ -315,6 +316,7 @@ def create_app() -> FastAPI:
     @app.get("/api/admin/system/resources")
     def resources(_: models.User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
         workers = worker_heartbeats(db)
+        fresh_workers = fresh_worker_heartbeats(workers)
         gpu = current_gpu_resources()
         if not gpu.get("available"):
             worker_gpu = gpu_resources_from_workers(workers)
@@ -324,7 +326,7 @@ def create_app() -> FastAPI:
             "cpu": current_cpu_resources(),
             "memory": current_memory_resources(),
             "gpu": gpu,
-            "workers": {"count": len(workers), "active_task_count": sum(1 for item in workers if item.current_task_id)},
+            "workers": {"count": len(fresh_workers), "active_task_count": sum(1 for item in fresh_workers if item.current_task_id)},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 

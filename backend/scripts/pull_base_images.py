@@ -9,8 +9,8 @@ from collections.abc import Iterable
 
 DEFAULT_BASE_IMAGES = (
     ("API_BASE_IMAGE", "python:3.12-slim"),
-    ("PREVIEW_CUDA_BASE_IMAGE", "nvidia/cuda:12.6.2-cudnn-devel-ubuntu22.04"),
-    ("LINGBOT_CUDA_BASE_IMAGE", "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04"),
+    ("GPU_CUDA_BUILD_IMAGE", "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04"),
+    ("GPU_CUDA_RUNTIME_IMAGE", "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04"),
 )
 
 

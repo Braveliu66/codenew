@@ -5,7 +5,7 @@
       "repo_url": "https://github.com/GarlicBa/LiteVGGT-repo",
       "license": "MIT",
       "commit_hash": null,
-      "weight_source": "https://huggingface.co/ZhijianShu/LiteVGGT/resolve/main/te_dict.pt",
+      "weight_source": "https://hf-mirror.com/ZhijianShu/LiteVGGT/resolve/main/te_dict.pt",
       "local_path": null,
       "enabled": false,
       "notes": "Preview geometry stage. Deployment must clone the official repository and download te_dict.pt before enabling.",

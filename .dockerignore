@@ -1,8 +1,10 @@
 .git
 .gitignore
 .runtime
+.docker-build-cache
 .tmp_tests
 storage
+model-cache
 backend-dev.log
 backend-dev.err.log
 frontend/frontend-dev.log
@@ -13,3 +15,11 @@ frontend/out
 frontend/tsconfig.tsbuildinfo
 __pycache__
 *.pyc
+repo-cache/**/node_modules
+repo-cache/**/.next
+repo-cache/**/dist
+repo-cache/**/target
+repo-cache/**/.cache
+!repo-cache/.gitkeep
+!repo-cache/**/.git
+!repo-cache/**/.git/**

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import socket
+import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -24,6 +25,17 @@ from backend.app.services.task_queue import PreviewTaskQueue, TaskQueueError
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 2.0
+MIN_HEARTBEAT_INTERVAL_SECONDS = 0.5
+HEARTBEAT_INTERVAL_SECONDS = DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+
+try:
+    HEARTBEAT_INTERVAL_SECONDS = max(
+        MIN_HEARTBEAT_INTERVAL_SECONDS,
+        float(os.environ.get("WORKER_HEARTBEAT_INTERVAL_SECONDS", str(DEFAULT_HEARTBEAT_INTERVAL_SECONDS))),
+    )
+except ValueError:
+    HEARTBEAT_INTERVAL_SECONDS = DEFAULT_HEARTBEAT_INTERVAL_SECONDS
 
 
 def main() -> None:
@@ -84,6 +96,7 @@ def process_preview_task(
     project.status = "PREVIEW_RUNNING"
     project.error_message = None
     db.commit()
+    stop_heartbeat = start_heartbeat_thread(worker_id=worker_id, current_task_id=task_id)
 
     try:
         request = build_preview_request(task, project, storage)
@@ -109,7 +122,29 @@ def process_preview_task(
         db.commit()
         return task
     finally:
+        stop_heartbeat()
         write_heartbeat(db, worker_id=worker_id, current_task_id=None)
+
+
+def start_heartbeat_thread(*, worker_id: str, current_task_id: str) -> Callable[[], None]:
+    stop_event = threading.Event()
+
+    def beat() -> None:
+        while not stop_event.wait(HEARTBEAT_INTERVAL_SECONDS):
+            try:
+                with SessionLocal() as heartbeat_db:
+                    write_heartbeat(heartbeat_db, worker_id=worker_id, current_task_id=current_task_id)
+            except Exception as exc:
+                print(f"preview worker heartbeat update failed: {exc}", flush=True)
+
+    thread = threading.Thread(target=beat, name=f"heartbeat-{worker_id}", daemon=True)
+    thread.start()
+
+    def stop() -> None:
+        stop_event.set()
+        thread.join(timeout=max(HEARTBEAT_INTERVAL_SECONDS + 4, 5))
+
+    return stop
 
 
 def build_preview_request(task: models.Task, project: models.Project, storage: ObjectStorage) -> PreviewTaskRequest:

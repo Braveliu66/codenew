@@ -5,14 +5,38 @@ FROM ${API_BASE_IMAGE}
 SHELL ["/bin/bash", "-lc"]
 WORKDIR /workspace
 
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG APT_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV APT_MIRROR=${APT_MIRROR}
+ENV APT_SECURITY_MIRROR=${APT_SECURITY_MIRROR}
 ENV PYTHONUTF8=1
 ENV PYTHONIOENCODING=utf-8
 ENV PYTHONPATH=/workspace
 ENV THREE_DGS_STORAGE_ROOT=/workspace/storage
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,id=three-dgs-api-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=three-dgs-api-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
+    && if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i \
+            -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|http://security.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
+            -e "s|http://security.debian.org/debian|${APT_MIRROR}|g" \
+            /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i \
+            -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|http://security.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
+            -e "s|http://security.debian.org/debian|${APT_MIRROR}|g" \
+            /etc/apt/sources.list; \
+    fi \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends --fix-missing ca-certificates curl ffmpeg
 
 COPY backend/requirements.txt backend/requirements.txt
 RUN --mount=type=cache,id=three-dgs-api-pip-cache,target=/root/.cache/pip,sharing=locked \

@@ -1,29 +1,32 @@
-# 系统优化点与架构融合创新
+# 系统优化点与架构融合
 
-## 系统优化点
+## Docker 体积优化
 
-- **Docker 下载可恢复**：大权重不在 Docker build 临时层下载，统一进入共享 `model-cache`；下载脚本使用 `.part`、HTTP Range、文件锁和重试，避免网络中断后从头开始。
-- **依赖隔离**：API、图片 Worker、视频/摄像头 Worker 使用不同镜像，避免 LiteVGGT/EDGS 与 LingBot-Map 的 Python、CUDA、PyTorch 依赖互相污染。
-- **一键部署**：`make deploy` 先补齐权重缓存，再启动 Compose；没有 `make` 时也可直接 `docker compose up -d --build`，Worker 启动预检会兜底下载缺失权重。
-- **渐进式预览**：摄像头分片和视频窗口可以生成 `preview_spz_segment`，Viewer 不等待完整重建完成即可加载已完成片段。
-- **Viewer 预算控制**：前端以 90 FPS 为目标，根据 FPS、网络状况和 500 万 Gaussians 默认预算动态调节质量。
+- **统一 GPU runtime**：`image-worker`、`video-worker`、`camera-worker` 复用 `three-dgs-gpu-runtime:local`，不再维护图片和视频两套 CUDA 镜像。
+- **统一 CUDA/PyTorch 基线**：GPU runtime 固定 Python 3.10、CUDA 12.8.1、PyTorch 2.8.0/cu128，减少基础层和 wheel 重复下载。
+- **多阶段构建**：builder 阶段保留 nvcc、Node、Rust、CMake、ninja 等编译工具；runtime 阶段只保留运行所需的 venv、算法仓库、Spark 转换脚本、Node 运行时和 ffmpeg。
+- **模型权重外置**：LiteVGGT 和 LingBot-Map 权重只进入共享 `model-cache`，通过 `.part`、HTTP Range 和文件锁支持断点续传，不写入镜像。
+- **算法源码缓存**：LiteVGGT、EDGS、LingBot-Map 和 Spark 先下载到宿主机 `repo-cache`，Docker build 优先复制本地缓存，缺失时才按国内镜像优先、官方源兜底在线 clone。
+- **Torch wheelhouse 缓存**：PyTorch/cu128 相关 wheel 先下载到 BuildKit cache mount `/root/.cache/three-dgs-wheelhouse`，完整 wheel 复用，`.part` 文件断点续传，避免大包失败后全部重下。
+- **构建上下文控制**：`.dockerignore` 排除 `model-cache`，同时保留 `repo-cache` 的源码工作树供 BuildKit 只读挂载，避免权重随 Docker build context 上传。
 
-## 架构融合创新点
+## 依赖融合策略
 
-- **统一 LingBot-Map 视频/摄像头路径**：离线视频和实时摄像头都使用 LingBot-Map，区别只在输入来源和窗口粒度；精细重建仍可在长视频场景叠加 MASt3R/Pi3 做全局优化。
-- **Artifact 兼容扩展**：不新增复杂产物表，复用 `artifacts.metadata` 表达 `segment_index`、时间窗口、LOD 和估算 splat 数；旧 `preview_spz` 单文件路径保持兼容。
-- **SSE 驱动 Viewer 增量加载**：`preview_segment_ready` 事件只通知新增能力，真实数据仍从对象存储签名 URL 拉取，避免 API 承载大模型传输。
-- **队列按任务类型拆分**：`preview_image_tasks`、`preview_video_tasks`、`preview_camera_tasks` 分别由对应 Worker 消费，是多 GPU 动态调度器之前的可运行调度基础。
-- **可扩展算法注册**：新增算法按“Dockerfile/镜像 + Compose 服务块 + registry 命令 + Worker 队列”扩展，保持后端任务模型稳定。
+- LiteVGGT 官方 requirements 中的 `torch==2.7.1`、`torchvision==0.22.1`、`numpy`、`opencv-python` 在统一构建脚本中过滤，避免覆盖 cu128 统一栈。
+- LingBot-Map 按官方推荐使用 PyTorch 2.8.0 / CUDA 12.8；安装项目本体时使用 `--no-deps -e`，避免 pip 重新解析 Torch。
+- EDGS 官方偏 Python 3.10 / CUDA 12.1，本项目在统一 runtime 中继续源码编译 `diff_gaussian_rasterization` 和 `simple_knn`，用预检结果确认可用。
+- Spark-SPZ 在构建期完成 npm/Rust build，运行期直接执行 `node scripts/compress-to-spz.js`，不保留完整 dev 构建链路。
 
-## 渐进式渲染策略
+## 架构融合点
 
-- Worker 每完成一个摄像头分片或视频时间窗口，就输出一个独立 SPZ segment。
-- API 将 segment 记录为 `preview_spz_segment` artifact，并通过 SSE 推送 `preview_segment_ready`。
-- Viewer 获取新的 viewer-config 后追加加载 segment；时间线中已完成区间可浏览，未完成区间保留占位。
+- **一个镜像，多队列 worker**：同一 GPU runtime 通过 `PREVIEW_WORKER_INPUT_TYPE=images|video|camera` 区分消费队列和默认管线。
+- **两套 registry 视图**：图片 worker 使用 image registry，只启用 LiteVGGT、EDGS、Spark、FFmpeg；视频/摄像头 worker 使用 video registry，只启用 LingBot-Map、Spark、FFmpeg。
+- **统一 Spark 输出**：图片、视频、摄像头最终都转为 SPZ，后端 artifact 和前端 Viewer 不需要区分算法来源。
+- **SSE 驱动增量加载**：摄像头分片完成后写入 `preview_spz_segment` artifact，并通过 `preview_segment_ready` 通知 Viewer 增量加载。
 
-## LOD 加载策略
+## 运行风险与观测
 
-- 当前 MVP 先使用 Spark 的 LOD 能力和前端质量档位控制 pixel ratio、`lodSplatScale`、`maxStdDev`、`maxPixelRadius`。
-- 后续 EcoSplat/RAP 产物接入后，segment metadata 中的 LOD、bounds 和 splat 数可用于视锥体剔除、方向预取和带宽自适应。
-- 当总 splat 数超过预算或 FPS 低于阈值时，Viewer 优先降低旧 segment 或远处 segment 的质量，保证交互帧率。
+- 统一版本后重点观察 LiteVGGT Transformer Engine、EDGS CUDA 扩展和 LingBot-Map 推理是否同时可用。
+- `python -m backend.scripts.check_preview_runtime` 是镜像准入检查；image/video/camera 三种 worker 都必须通过。
+- `docker system df -v` 和镜像保存包大小用于验证瘦身收益。
+- 如果 Torch/CUDA 版本冲突，优先保留 CUDA 12.8 / Torch 2.8 基线，再针对 LiteVGGT 或 EDGS 做局部依赖修正。
