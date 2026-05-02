@@ -132,6 +132,7 @@ class TaskExecutionResult:
     task_id: str
     status: str
     artifacts: list[dict[str, Any]] = field(default_factory=list)
+    artifact_paths: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
     logs: list[str] = field(default_factory=list)
     errors: list[dict[str, Any]] = field(default_factory=list)
@@ -146,6 +147,8 @@ class TaskExecutionResult:
             "logs": self.logs,
             "errors": self.errors,
         }
+        if self.artifact_paths:
+            payload["artifact_paths"] = self.artifact_paths
         if self.plan is not None:
             payload["plan"] = self.plan
         return payload

@@ -870,7 +870,7 @@ def ffmpeg_entry(script_dir: Path) -> dict[str, object]:
         "weight_source": None,
         "local_path": None,
         "enabled": shutil.which("ffmpeg") is not None,
-        "notes": "Video preview frame extraction.",
+        "notes": "Legacy video utility. Default LingBot preview uses native video_path input.",
         "weight_paths": [],
         "source_type": "command",
         "commands": {"extract_frames": ["python3", str(script_dir / "run_ffmpeg_extract.py")]},

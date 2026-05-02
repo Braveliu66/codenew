@@ -106,8 +106,8 @@ export const api = {
   mediaStats: (projectId: string) => request<Record<string, unknown>>(`/api/projects/${projectId}/media/stats`),
   startPreview: (projectId: string, options: Record<string, unknown> = {}) =>
     request<Task>(`/api/projects/${projectId}/tasks/preview`, { method: "POST", body: JSON.stringify({ options }) }),
-  startFine: (projectId: string) =>
-    request<Task>(`/api/projects/${projectId}/tasks/fine`, { method: "POST", body: JSON.stringify({ options: {} }) }),
+  startFine: (projectId: string, options: Record<string, unknown> = {}) =>
+    request<Task>(`/api/projects/${projectId}/tasks/fine`, { method: "POST", body: JSON.stringify({ options }) }),
   task: (id: string) => request<Task>(`/api/tasks/${id}`),
   cancelTask: (id: string) => request<Task>(`/api/tasks/${id}/cancel`, { method: "POST" }),
   artifacts: (projectId: string) => request<{ artifacts: Artifact[] }>(`/api/projects/${projectId}/artifacts`),

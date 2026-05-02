@@ -12,12 +12,14 @@ from sqlalchemy import select
 from backend.app.core.security import hash_password
 from backend.app.db import models
 from backend.app.db.session import SessionLocal, configure_database, init_database
-from backend.app.main import create_app, queue_dependency
+from backend.app.algorithms.models import TaskExecutionResult
+from backend.app.main import create_app, fine_queue_dependency, queue_dependency
 from backend.app.services.object_storage import ObjectStorage
-from backend.app.services.project_store import create_preview_task, create_project, save_upload
+from backend.app.services.project_store import create_fine_task, create_preview_task, create_project, save_upload
 from backend.app.services.registry_store import seed_algorithm_registry
 from backend.app.services.seed import seed_database
 from backend.workers.preview_worker import process_preview_task
+from backend.workers.fine_worker import process_fine_task
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
@@ -29,6 +31,57 @@ class FakeQueue:
 
     def enqueue_preview(self, task_id: str, input_type: str = "images") -> None:
         self.enqueued.append((task_id, input_type))
+
+
+class FakeFineQueue:
+    def __init__(self) -> None:
+        self.enqueued: list[str] = []
+
+    def enqueue_fine(self, task_id: str) -> None:
+        self.enqueued.append(task_id)
+
+
+class FakeFineEngine:
+    def __init__(self, artifacts: list[dict[str, object]] | None = None, status: str = "succeeded") -> None:
+        self.artifacts = artifacts or []
+        self.status = status
+
+    def execute(self, request):
+        artifacts = self.artifacts
+        if self.status == "succeeded" and not artifacts:
+            final_dir = request.work_dir / "final"
+            lod_dir = final_dir / "lod"
+            final_dir.mkdir(parents=True, exist_ok=True)
+            lod_dir.mkdir(parents=True, exist_ok=True)
+            final_ply = final_dir / "final.ply"
+            final_spz = final_dir / "final_web.spz"
+            metrics = final_dir / "metrics.json"
+            final_ply.write_bytes(b"ply")
+            final_spz.write_bytes(b"spz")
+            metrics.write_text("{}", encoding="utf-8")
+            artifacts = [
+                {"kind": "final_ply", "path": str(final_ply), "file_name": "final.ply"},
+                {"kind": "final_web_spz", "path": str(final_spz), "file_name": "final_web.spz"},
+                {"kind": "metrics_json", "path": str(metrics), "file_name": "metrics.json"},
+            ]
+            for lod in range(4):
+                path = lod_dir / f"final_lod{lod}.rad"
+                path.write_bytes(f"rad-{lod}".encode("ascii"))
+                artifacts.append(
+                    {
+                        "kind": "lod_rad",
+                        "path": str(path),
+                        "file_name": path.name,
+                        "metadata": {"lod": lod, "target_gaussians": [1_000_000, 500_000, 200_000, 50_000][lod], "actual_gaussians": 10},
+                    }
+                )
+        return TaskExecutionResult(
+            task_id=request.task_id,
+            status=self.status,
+            artifacts=artifacts,
+            metrics={"fake": True},
+            errors=[] if self.status == "succeeded" else [{"code": "ALGORITHM_OUTPUT_INVALID", "message": "fake failure"}],
+        )
 
 
 def configure_test_database(name: str) -> Path:
@@ -52,6 +105,11 @@ class EngineeringBackendTests(unittest.TestCase):
         app = create_app()
         if fake_queue is not None:
             app.dependency_overrides[queue_dependency] = lambda: fake_queue
+        return TestClient(app)
+
+    def make_client_with_fine_queue(self, fake_queue: FakeFineQueue) -> TestClient:
+        app = create_app()
+        app.dependency_overrides[fine_queue_dependency] = lambda: fake_queue
         return TestClient(app)
 
     def register(self, client: TestClient, username: str) -> str:
@@ -149,6 +207,37 @@ class EngineeringBackendTests(unittest.TestCase):
             self.assertEqual(task.status_code, 200, task.text)
             self.assertEqual(task.json()["status"], "queued")
             self.assertEqual(fake_queue.enqueued, [(task.json()["id"], "images")])
+
+    def test_fine_task_is_queued_without_creating_artifact(self) -> None:
+        fake_queue = FakeFineQueue()
+        with self.make_client_with_fine_queue(fake_queue) as client:
+            token = self.register(client, "fine-queue")
+            project = client.post(
+                "/api/projects",
+                json={"name": "fine", "input_type": "images", "tags": []},
+                headers={"Authorization": f"Bearer {token}"},
+            ).json()
+            upload = client.post(
+                f"/api/projects/{project['id']}/media",
+                files={"file": ("image.jpg", b"real upload bytes", "image/jpeg")},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(upload.status_code, 200, upload.text)
+
+            task = client.post(
+                f"/api/projects/{project['id']}/tasks/fine",
+                json={"options": {}},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+            self.assertEqual(task.status_code, 200, task.text)
+            self.assertEqual(task.json()["status"], "queued")
+            self.assertEqual(fake_queue.enqueued, [task.json()["id"]])
+            artifacts = client.get(
+                f"/api/projects/{project['id']}/artifacts",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(artifacts.json()["artifacts"], [])
 
     def test_video_preview_task_uses_video_queue_and_lingbot_pipeline(self) -> None:
         fake_queue = FakeQueue()
@@ -248,6 +337,74 @@ class EngineeringBackendTests(unittest.TestCase):
             self.assertEqual(payload["mode"], "progressive")
             self.assertEqual(payload["segments"][0]["segment_index"], 0)
 
+    def test_viewer_config_prefers_final_over_preview(self) -> None:
+        with SessionLocal() as db:
+            user = models.User(username="final-viewer", password_hash=hash_password("secret123"), role="user")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            project = create_project(db, user, {"name": "final", "input_type": "images", "tags": []})
+            project_id = project.id
+            task = models.Task(project_id=project.id, type="fine", status="succeeded", progress=100)
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            storage = ObjectStorage()
+            preview_source = TEST_TMP_ROOT / f"preview-{uuid.uuid4().hex}.spz"
+            preview_source.write_bytes(b"preview")
+            final_source = TEST_TMP_ROOT / f"final-{uuid.uuid4().hex}.spz"
+            final_source.write_bytes(b"final")
+            lod_source = TEST_TMP_ROOT / f"final-lod-{uuid.uuid4().hex}.rad"
+            lod_source.write_bytes(b"rad")
+            db.add(
+                models.Artifact(
+                    project_id=project.id,
+                    task_id=task.id,
+                    kind="preview_spz",
+                    object_uri=storage.put_file(f"users/{user.id}/projects/{project.id}/preview/preview.spz", preview_source),
+                    file_name="preview.spz",
+                    file_size=preview_source.stat().st_size,
+                )
+            )
+            db.add(
+                models.Artifact(
+                    project_id=project.id,
+                    task_id=task.id,
+                    kind="final_web_spz",
+                    object_uri=storage.put_file(f"users/{user.id}/projects/{project.id}/fine/final_web.spz", final_source),
+                    file_name="final_web.spz",
+                    file_size=final_source.stat().st_size,
+                )
+            )
+            db.add(
+                models.Artifact(
+                    project_id=project.id,
+                    task_id=task.id,
+                    kind="lod_rad",
+                    object_uri=storage.put_file(f"users/{user.id}/projects/{project.id}/fine/final_lod0.rad", lod_source),
+                    file_name="final_lod0.rad",
+                    file_size=lod_source.stat().st_size,
+                    artifact_metadata={"lod": 0, "target_gaussians": 1000000, "actual_gaussians": 900000},
+                )
+            )
+            db.commit()
+
+        with self.make_client() as client:
+            login = client.post("/api/auth/login", json={"username": "final-viewer", "password": "secret123"})
+            self.assertEqual(login.status_code, 200, login.text)
+            response = client.get(
+                f"/api/projects/{project_id}/viewer-config",
+                headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["source"], "final")
+            self.assertEqual(payload["artifact_id"], next(item["id"] for item in client.get(
+                f"/api/projects/{project_id}/artifacts",
+                headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+            ).json()["artifacts"] if item["kind"] == "final_web_spz"))
+            self.assertEqual(payload["lods"][0]["target_gaussians"], 1000000)
+
     def test_preview_task_caps_selected_image_frames_at_800(self) -> None:
         with SessionLocal() as db:
             user = models.User(username="cap-user", password_hash="unused", role="user")
@@ -338,6 +495,53 @@ class EngineeringBackendTests(unittest.TestCase):
             self.assertEqual(processed.error_code, "ALGORITHM_NOT_CONFIGURED")
             artifacts = list(db.scalars(select(models.Artifact).where(models.Artifact.task_id == task.id)))
             self.assertEqual(artifacts, [])
+
+    def test_fine_worker_fails_unconfigured_algorithms_without_artifact(self) -> None:
+        with SessionLocal() as db:
+            user = models.User(username="fine-worker-fail", password_hash="unused", role="user")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            project = create_project(db, user, {"name": "fine worker fail", "input_type": "images", "tags": []})
+            storage = ObjectStorage()
+            save_upload(db, storage, user, project, "image.jpg", b"real upload bytes", "image/jpeg")
+            task = create_fine_task(db, project, {})
+
+            processed = process_fine_task(db, task.id, worker_id="fine-test-worker", storage=storage)
+
+            self.assertIsNotNone(processed)
+            self.assertEqual(processed.status, "failed")
+            self.assertEqual(processed.error_code, "ALGORITHM_NOT_CONFIGURED")
+            artifacts = list(db.scalars(select(models.Artifact).where(models.Artifact.task_id == task.id)))
+            self.assertEqual(artifacts, [])
+
+    def test_fine_worker_persists_complete_final_artifacts(self) -> None:
+        with SessionLocal() as db:
+            user = models.User(username="fine-worker-ok", password_hash="unused", role="user")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            project = create_project(db, user, {"name": "fine worker ok", "input_type": "images", "tags": []})
+            storage = ObjectStorage()
+            save_upload(db, storage, user, project, "image.jpg", b"real upload bytes", "image/jpeg")
+            task = create_fine_task(db, project, {})
+
+            processed = process_fine_task(
+                db,
+                task.id,
+                worker_id="fine-test-worker",
+                storage=storage,
+                engine_factory=lambda _db: FakeFineEngine(),
+            )
+
+            self.assertIsNotNone(processed)
+            self.assertEqual(processed.status, "succeeded")
+            self.assertEqual(processed.project.status, "COMPLETED")
+            artifacts = list(db.scalars(select(models.Artifact).where(models.Artifact.task_id == task.id)))
+            self.assertEqual(
+                sorted(item.kind for item in artifacts),
+                ["final_ply", "final_web_spz", "lod_rad", "lod_rad", "lod_rad", "lod_rad", "metrics_json"],
+            )
 
 
 if __name__ == "__main__":

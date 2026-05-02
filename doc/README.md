@@ -34,3 +34,11 @@
 - 所有第三方算法源码都先放入项目根目录 `repo-cache/<repo-name>`；Docker 构建必须优先复用本地缓存，缺失时先尝试国内镜像源再回退官方源。
 - 源码、配置和文档统一使用 UTF-8 编码；Windows PowerShell 若显示乱码，应先切换终端编码或使用 UTF-8 读取。
 
+## 2026-05-03 精细重建补充文档
+
+新增：
+
+11. `11-fine-reconstruction-deployment-gap.md`：记录 Fused3DGS 精细重建融合代码的当前实现状态、距离系统设计目标的差距、真实部署前必须完成的清单和推荐实施顺序。
+
+后续如果要继续接入真实 Faster-GS / FastGS / Deblurring-3DGS / 3DGS-LM，请优先阅读第 11 份文档，再回到 `09-deployment.md` 和 `10-optimization-architecture.md` 对照部署与架构约束。
+

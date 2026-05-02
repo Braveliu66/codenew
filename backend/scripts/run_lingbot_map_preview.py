@@ -21,7 +21,6 @@ def main() -> int:
     model_path = Path(os.environ.get("LINGBOT_MODEL_PATH") or (weights[0] if weights else ""))
     video_path = Path(spec["video_path"])
     output_dir = Path(spec["output_dir"])
-    frame_dir = output_dir / "frames"
     ply_path = output_dir / "preview.ply"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -32,104 +31,51 @@ def main() -> int:
     if not video_path.exists() or video_path.stat().st_size <= 0:
         raise RuntimeError(f"video input is missing or empty: {video_path}")
 
-    extraction = extract_video_frames(
-        video_path=video_path,
-        output_dir=frame_dir,
-        target_frame_count=positive_int(spec.get("target_frame_count")),
-        frame_sample_fps=positive_float(spec.get("frame_sample_fps")),
-        min_frames=max(int(spec.get("min_preview_frames") or 1), 1),
-        max_frames=max(int(spec.get("max_preview_frames") or 800), 1),
-    )
     result = run_lingbot(
         repo_path=repo_path,
         model_path=model_path,
-        image_dir=frame_dir,
+        video_path=video_path,
         output_ply=ply_path,
         mode=str(spec.get("video_preview_mode") or os.environ.get("VIDEO_PREVIEW_MODE") or "windowed"),
+        fps=positive_float(spec.get("lingbot_fps")) or positive_float(spec.get("frame_sample_fps")) or positive_float(os.environ.get("LINGBOT_VIDEO_FPS")) or 10.0,
+        first_k=positive_int(spec.get("lingbot_first_k")),
+        stride=positive_int(spec.get("lingbot_stride")) or 1,
         mask_sky=bool(spec.get("mask_sky", False)),
         max_points=positive_int(spec.get("max_preview_points")) or 300000,
     )
-    metrics = {**extraction, **result}
+    metrics = {
+        "source_video_bytes": video_path.stat().st_size,
+        "lingbot_input_mode": "native_video",
+        **result,
+    }
+    artifacts = [
+        {"kind": "preview_ply", "path": str(ply_path.resolve())},
+        {"kind": "point_cloud", "path": str(ply_path.resolve())},
+    ]
+    resolved_input = result.get("resolved_input_folder")
+    if resolved_input and Path(str(resolved_input)).exists():
+        artifacts.insert(0, {"kind": "lingbot_input_dir", "path": str(Path(str(resolved_input)).resolve())})
     write_result(
         result_path,
         {
             "status": "succeeded",
-            "artifacts": [
-                {"kind": "frame_dir", "path": str(frame_dir.resolve())},
-                {"kind": "preview_ply", "path": str(ply_path.resolve())},
-                {"kind": "point_cloud", "path": str(ply_path.resolve())},
-            ],
+            "artifacts": artifacts,
             "metrics": metrics,
         },
     )
     return 0
 
 
-def extract_video_frames(
-    *,
-    video_path: Path,
-    output_dir: Path,
-    target_frame_count: int | None,
-    frame_sample_fps: float | None,
-    min_frames: int,
-    max_frames: int,
-) -> dict[str, Any]:
-    try:
-        import cv2
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("opencv-python is required for LingBot-Map video frame extraction") from exc
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise RuntimeError(f"cannot open video input: {video_path}")
-    source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
-    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    if total_frames <= 0:
-        raise RuntimeError("video frame count cannot be read")
-    duration = (total_frames / source_fps) if source_fps > 0 else None
-
-    if target_frame_count is not None:
-        selected_count = target_frame_count
-    elif frame_sample_fps is not None and duration is not None:
-        selected_count = int(duration * frame_sample_fps) + 1
-    else:
-        selected_count = total_frames
-    selected_count = min(max(selected_count, min_frames), max_frames, total_frames)
-    if selected_count < min_frames:
-        raise RuntimeError(f"LingBot-Map video preview requires at least {min_frames} sampled frames; got {selected_count}")
-
-    indexes = sorted({int(round(value)) for value in np.linspace(0, total_frames - 1, selected_count)})
-    written = 0
-    for index in indexes:
-        capture.set(cv2.CAP_PROP_POS_FRAMES, index)
-        ok, frame = capture.read()
-        if not ok or frame is None:
-            continue
-        target = output_dir / f"frame_{written:05d}.jpg"
-        if not cv2.imwrite(str(target), frame):
-            raise RuntimeError(f"failed to write sampled frame: {target}")
-        written += 1
-    capture.release()
-    if written < min_frames:
-        raise RuntimeError(f"LingBot-Map video preview sampled {written} usable frames; at least {min_frames} are required")
-    return {
-        "source_frame_count": total_frames,
-        "source_fps": source_fps,
-        "source_duration_seconds": duration,
-        "selected_frame_count": written,
-        "sampled_first_frame": indexes[0],
-        "sampled_last_frame": indexes[-1],
-    }
-
-
 def run_lingbot(
     *,
     repo_path: Path,
     model_path: Path,
-    image_dir: Path,
+    video_path: Path,
     output_ply: Path,
     mode: str,
+    fps: float,
+    first_k: int | None,
+    stride: int,
     mask_sky: bool,
     max_points: int,
 ) -> dict[str, Any]:
@@ -148,7 +94,11 @@ def run_lingbot(
 
     device = torch.device(os.environ.get("LINGBOT_DEVICE", "cuda:0"))
     args = SimpleNamespace(
-        image_folder=str(image_dir),
+        image_folder=None,
+        video_path=str(video_path),
+        fps=fps,
+        first_k=first_k,
+        stride=stride,
         model_path=str(model_path),
         image_size=int(os.environ.get("LINGBOT_IMAGE_SIZE", "518")),
         patch_size=int(os.environ.get("LINGBOT_PATCH_SIZE", "14")),
@@ -168,11 +118,21 @@ def run_lingbot(
     )
 
     model = load_model(args, device)
-    images, _paths, _resolved_image_folder = load_images(
-        image_folder=args.image_folder,
-        image_size=args.image_size,
-        patch_size=args.patch_size,
-    )
+    try:
+        images, paths, resolved_image_folder = load_images(
+            image_folder=args.image_folder,
+            video_path=args.video_path,
+            fps=args.fps,
+            first_k=args.first_k,
+            stride=args.stride,
+            image_size=args.image_size,
+            patch_size=args.patch_size,
+        )
+    except TypeError as exc:
+        raise RuntimeError(
+            "The configured LingBot-Map checkout does not expose demo.load_images(video_path=..., fps=...). "
+            "Update LingBot-Map instead of using platform-side frame extraction."
+        ) from exc
     dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
     if getattr(model, "aggregator", None) is not None:
         model.aggregator = model.aggregator.to(dtype=dtype)
@@ -184,6 +144,8 @@ def run_lingbot(
                 "device": str(device),
                 "device_name": torch.cuda.get_device_name(device.index or 0),
                 "input_frames": int(images.shape[0]),
+                "video_path": str(video_path),
+                "fps": fps,
                 "mode": args.mode,
             },
             ensure_ascii=False,
@@ -221,6 +183,12 @@ def run_lingbot(
     )
     return {
         "point_count": point_count,
+        "input_frames": int(images.shape[0]),
+        "input_paths": len(paths) if paths is not None else 0,
+        "resolved_input_folder": str(resolved_image_folder) if resolved_image_folder else None,
+        "lingbot_fps": fps,
+        "lingbot_first_k": first_k,
+        "lingbot_stride": stride,
         "keyframe_interval": keyframe_interval,
         "window_size": None if args.mode == "streaming" else args.window_size,
         "video_preview_mode": args.mode,

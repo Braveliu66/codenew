@@ -240,9 +240,77 @@ def validate_fine_inputs(project: models.Project) -> dict[str, Any]:
     raise ValueError("camera fine reconstruction is not implemented")
 
 
+def default_fine_options(project: models.Project, options: dict[str, Any]) -> dict[str, Any]:
+    normalized = deep_merge(
+        {
+            "fused3dgs": {
+                "use_deblur": "auto",
+                "use_vcd": True,
+                "use_lm_optimizer": True,
+            },
+            "deblurring": {
+                "start_iter": 0,
+                "mlp_hidden": 64,
+            },
+            "lm_optimizer": {
+                "enabled": True,
+                "start_iter": 3000,
+                "interval": 200,
+                "pcg_rtol": 0.05,
+                "pcg_max_iter": 8,
+            },
+            "vcd": {
+                "enabled": True,
+                "loss_thresh": 0.1,
+                "grad_thresh": 0.0002,
+            },
+            "outputs": {
+                "spz": True,
+                "lod": True,
+                "metrics": True,
+            },
+            "lod_targets": {
+                "0": 1_000_000,
+                "1": 500_000,
+                "2": 200_000,
+                "3": 50_000,
+            },
+            "timeout_seconds": 7200,
+        },
+        options,
+    )
+    normalized.setdefault("input_policy", validate_fine_inputs(project))
+    normalized["blur_detected"] = resolve_blur_detected(project, normalized)
+    return normalized
+
+
+def deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def resolve_blur_detected(project: models.Project, options: dict[str, Any]) -> bool:
+    explicit = options.get("blur_detected")
+    if explicit is not None:
+        return bool(explicit)
+    fused = options.get("fused3dgs") if isinstance(options.get("fused3dgs"), dict) else {}
+    use_deblur = fused.get("use_deblur")
+    if isinstance(use_deblur, bool):
+        return use_deblur
+    for asset in project.media_assets:
+        flags = asset.quality_flags or {}
+        if bool(flags.get("blur_detected") or flags.get("blurry") or flags.get("motion_blur")):
+            return True
+    return False
+
+
 def create_fine_task(db: Session, project: models.Project, options: dict[str, Any] | None = None) -> models.Task:
-    options = dict(options or {})
-    options.setdefault("input_policy", validate_fine_inputs(project))
+    options = default_fine_options(project, dict(options or {}))
     task = models.Task(
         project_id=project.id,
         type="fine",

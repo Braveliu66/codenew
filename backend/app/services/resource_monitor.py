@@ -337,8 +337,8 @@ def parse_nvidia_smi_gpus(output: str) -> list[dict[str, Any]]:
                 uuid = None
                 name = parts[1]
                 usage = float(parts[2])
-                used = float(parts[3])
-                total = float(parts[4])
+                total = float(parts[3])
+                used = float(parts[4])
         except ValueError:
             continue
         gpus.append(

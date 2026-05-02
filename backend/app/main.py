@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -67,7 +67,7 @@ from backend.app.services.serializers import (
     user_to_dict,
     worker_to_dict,
 )
-from backend.app.services.task_queue import PreviewTaskQueue, TaskQueueError
+from backend.app.services.task_queue import FineTaskQueue, PreviewTaskQueue, TaskQueueError
 
 
 bearer = HTTPBearer(auto_error=False)
@@ -100,6 +100,10 @@ def storage_dependency() -> ObjectStorage:
 
 def queue_dependency() -> PreviewTaskQueue:
     return PreviewTaskQueue()
+
+
+def fine_queue_dependency() -> FineTaskQueue:
+    return FineTaskQueue()
 
 
 def current_cpu_percent() -> float | None:
@@ -547,10 +551,10 @@ def create_app() -> FastAPI:
     @app.post("/api/projects/{project_id}/tasks/fine")
     def create_fine_task_endpoint(
         project_id: str,
-        background_tasks: BackgroundTasks,
         payload: dict[str, Any] | None = None,
         user: models.User = Depends(get_current_user),
         db: Session = Depends(get_db),
+        queue: FineTaskQueue = Depends(fine_queue_dependency),
     ) -> dict[str, Any]:
         project = get_project_for_user(db, user, project_id)
         if not project:
@@ -559,7 +563,18 @@ def create_app() -> FastAPI:
             task = create_fine_task(db, project, (payload or {}).get("options") or {})
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        background_tasks.add_task(process_fine_task_background, task.id)
+        try:
+            queue.enqueue_fine(task.id)
+        except TaskQueueError as exc:
+            task.status = "failed"
+            task.progress = 100
+            task.current_stage = "queue_unavailable"
+            task.error_code = "QUEUE_UNAVAILABLE"
+            task.error_message = str(exc)
+            project.status = "FAILED"
+            project.error_message = str(exc)
+            db.commit()
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return task_to_dict(task)
 
     @app.post("/api/tasks/preview/plan")
@@ -732,6 +747,38 @@ def create_app() -> FastAPI:
         if not project:
             raise HTTPException(status_code=404, detail="project not found")
         artifacts = list_artifacts(db, project)
+        final = next((artifact for artifact in artifacts if artifact.kind == "final_web_spz"), None)
+        if final:
+            presigned = storage.presigned_url(final.object_uri)
+            token = create_artifact_token(final.id)
+            lod_payloads = []
+            for lod_artifact in sorted(
+                [artifact for artifact in artifacts if artifact.kind == "lod_rad"],
+                key=lambda item: int((item.artifact_metadata or {}).get("lod") or 0),
+            ):
+                metadata = lod_artifact.artifact_metadata or {}
+                lod_presigned = storage.presigned_url(lod_artifact.object_uri)
+                lod_token = create_artifact_token(lod_artifact.id)
+                lod_payloads.append(
+                    {
+                        "artifact_id": lod_artifact.id,
+                        "model_url": lod_presigned or f"/api/artifacts/{lod_artifact.id}/file?token={lod_token}",
+                        "format": "rad",
+                        "lod": int(metadata.get("lod") or 0),
+                        "target_gaussians": metadata.get("target_gaussians"),
+                        "actual_gaussians": metadata.get("actual_gaussians"),
+                        "file_size": lod_artifact.file_size,
+                    }
+                )
+            return {
+                "status": "ready",
+                "mode": "single",
+                "source": "final",
+                "artifact_id": final.id,
+                "model_url": presigned or f"/api/artifacts/{final.id}/file?token={token}",
+                "format": "spz",
+                "lods": lod_payloads,
+            }
         segments = [
             artifact
             for artifact in artifacts
@@ -762,6 +809,7 @@ def create_app() -> FastAPI:
             return {
                 "status": "ready",
                 "mode": "progressive",
+                "source": "preview",
                 "format": "spz",
                 "segments": segment_payloads,
                 "progressive": True,
@@ -774,6 +822,7 @@ def create_app() -> FastAPI:
         return {
             "status": "ready",
             "mode": "single",
+            "source": "preview",
             "artifact_id": preview.id,
             "model_url": presigned or f"/api/artifacts/{preview.id}/file?token={token}",
             "format": "spz",

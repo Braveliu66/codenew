@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Download, FileArchive, Film, Images, PauseCircle, ScrollText, Trash2 } from "lucide-react";
+import { Download, FileArchive, Film, Images, PauseCircle, PlayCircle, ScrollText, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { api, artifactUrl, formatBytes } from "@/lib/api";
@@ -50,6 +50,7 @@ export default function ProjectDetailPage() {
   const logs = latestTask?.logs ?? [];
   const showMediaList = media.length > MEDIA_LIST_THRESHOLD;
   const showCompactLogs = logs.length > LOG_LIST_THRESHOLD;
+  const canStartFine = Boolean(project && !isActiveTask(latestTask) && (project.status === "PREVIEW_READY" || project.status === "COMPLETED"));
 
   const storageStats = useMemo(() => {
     const artifactBytes = artifacts.reduce((sum, item) => sum + item.file_size, 0);
@@ -64,6 +65,20 @@ export default function ProjectDetailPage() {
       await loadProject(task.project_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "取消任务失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startFine() {
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.startFine(project.id);
+      await loadProject(project.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "精细重建入队失败");
     } finally {
       setBusy(false);
     }
@@ -106,6 +121,9 @@ export default function ProjectDetailPage() {
           <button className="ghost-button" type="button" onClick={() => setLogTask(latestTask ?? null)} disabled={!latestTask}>
             <ScrollText size={17} />查看日志
           </button>
+          <button className="ghost-button" type="button" onClick={() => void startFine()} disabled={!canStartFine || busy}>
+            <PlayCircle size={17} />精细重建
+          </button>
           {latestTask && isActiveTask(latestTask) ? (
             <button className="danger-button" type="button" onClick={() => void cancelTask(latestTask)} disabled={busy}>
               <PauseCircle size={17} />取消任务
@@ -122,7 +140,13 @@ export default function ProjectDetailPage() {
           <div className="panel-head">
             <div>
               <h2>3D 查看器</h2>
-              <p className="muted small">{viewer?.status === "ready" ? "已加载真实 SPZ 产物" : viewer?.message ?? "等待真实预览产物"}</p>
+              <p className="muted small">
+                {viewer?.status === "ready"
+                  ? viewer.source === "final"
+                    ? "已加载精细重建 final_web.spz"
+                    : "已加载极速预览 SPZ"
+                  : viewer?.message ?? "等待真实预览产物"}
+              </p>
             </div>
             {project ? <span className={`status-pill ${project.status}`}>{projectStatusLabel(project.status)}</span> : null}
           </div>
@@ -172,6 +196,23 @@ export default function ProjectDetailPage() {
                   </div>
                 ) : <div className="empty-state">暂无真实产物</div>}
               </section>
+
+              {viewer?.lods?.length ? (
+                <section className="stack">
+                  <h3>LOD</h3>
+                  <div className="artifact-list">
+                    {viewer.lods.map((lod) => (
+                      <div className="list-row" style={{ gridTemplateColumns: "64px minmax(0, 1fr) 92px" }} key={lod.artifact_id}>
+                        <span>LOD{lod.lod}</span>
+                        <span className="muted small truncate">
+                          target {Number(lod.target_gaussians ?? 0).toLocaleString()} / actual {lod.actual_gaussians?.toLocaleString() ?? "-"}
+                        </span>
+                        <span className="muted small">{formatBytes(lod.file_size)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               <section className="stack">
                 <h3>媒体数据</h3>

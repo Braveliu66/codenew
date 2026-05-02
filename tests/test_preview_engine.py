@@ -47,6 +47,8 @@ class PreviewEngineTests(unittest.TestCase):
             ["LingBot-Map", "Spark-SPZ"],
         )
         self.assertEqual(plan.pipeline_options["preview_pipeline"], "lingbot_map_spark")
+        self.assertEqual(plan.pipeline_options["lingbot_input_mode"], "native_video")
+        self.assertNotIn("target_frame_count", plan.pipeline_options)
 
     def test_camera_plan_uses_lingbot_map_progressive_streaming(self) -> None:
         engine = PreviewEngine(AlgorithmRegistry())

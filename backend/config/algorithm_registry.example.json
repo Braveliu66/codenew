@@ -48,6 +48,10 @@
         "compress": [
           "python",
           "backend/scripts/run_spz_convert.py"
+        ],
+        "compress_final": [
+          "python",
+          "backend/scripts/run_final_spz_convert.py"
         ]
       }
     },
@@ -59,7 +63,7 @@
       "weight_source": null,
       "local_path": null,
       "enabled": false,
-      "notes": "Video preview frame extraction. Deployment must install ffmpeg and enable this registry entry.",
+      "notes": "Legacy video utility. Default LingBot preview uses native video_path input and does not require platform-side frame extraction.",
       "weight_paths": [],
       "source_type": "command",
       "commands": {
@@ -77,9 +81,14 @@
       "weight_source": null,
       "local_path": null,
       "enabled": false,
-      "notes": "Required one-process host framework. Set a real git checkout, exact commit hash and fine_engine command before enabling.",
+      "notes": "Required one-process host framework for fused fine reconstruction. Set a real checkout, exact commit hash and fine_engine command before enabling.",
       "weight_paths": [],
-      "commands": {}
+      "commands": {
+        "fine_engine": [
+          "python",
+          "backend/scripts/run_fused3dgs_fine.py"
+        ]
+      }
     },
     {
       "name": "FastGS",
@@ -89,7 +98,7 @@
       "weight_source": null,
       "local_path": null,
       "enabled": false,
-      "notes": "Injected as densify_and_prune callback into Faster-GS.",
+      "notes": "Injected as VCD densify/prune callback into the Faster-GS host loop.",
       "weight_paths": [],
       "commands": {}
     },
@@ -101,7 +110,7 @@
       "weight_source": null,
       "local_path": null,
       "enabled": false,
-      "notes": "Enabled only when preprocessing detects blurry media.",
+      "notes": "Training-only covariance modulation MLP. Enabled only when blur is detected or explicitly requested.",
       "weight_paths": [],
       "commands": {}
     },
@@ -113,9 +122,27 @@
       "weight_source": null,
       "local_path": null,
       "enabled": false,
-      "notes": "Switches optimizer from Adam to LM after 70 percent of iterations.",
+      "notes": "LM optimizer module called at fixed training intervals after lm_optimizer.start_iter.",
       "weight_paths": [],
       "commands": {}
+    },
+    {
+      "name": "RAD-LOD",
+      "repo_url": "internal://fused3dgs/rad-lod-exporter",
+      "license": "Project internal adapter; output inherits source algorithm licenses",
+      "commit_hash": "system-command",
+      "weight_source": null,
+      "local_path": null,
+      "enabled": false,
+      "notes": "Exports real RAD LOD files from final.ply or an algorithm checkpoint. The command must be backed by a configured real exporter.",
+      "weight_paths": [],
+      "source_type": "command",
+      "commands": {
+        "export_rad": [
+          "python",
+          "backend/scripts/run_lod_export.py"
+        ]
+      }
     },
     {
       "name": "MeshSplatting",

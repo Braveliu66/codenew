@@ -7,6 +7,7 @@ const projectStatusLabels: Record<ProjectStatus, string> = {
   PREVIEW_RUNNING: "预览生成中",
   PREVIEW_READY: "预览就绪",
   FINE_QUEUED: "精细重建排队",
+  GLOBAL_OPTIMIZING: "全局优化中",
   FINE_RUNNING: "精细重建中",
   COMPLETED: "已完成",
   FAILED: "失败",

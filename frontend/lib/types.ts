@@ -5,6 +5,7 @@ export type ProjectStatus =
   | "PREVIEW_RUNNING"
   | "PREVIEW_READY"
   | "FINE_QUEUED"
+  | "GLOBAL_OPTIMIZING"
   | "FINE_RUNNING"
   | "COMPLETED"
   | "FAILED"
@@ -92,7 +93,7 @@ export interface Artifact {
 export interface ViewerSegment {
   artifact_id: string;
   model_url: string;
-  format: "spz";
+  format: "spz" | "rad";
   segment_index: number;
   segment_start_seconds?: number | null;
   segment_end_seconds?: number | null;
@@ -101,12 +102,24 @@ export interface ViewerSegment {
   file_size?: number | null;
 }
 
+export interface ViewerLod {
+  artifact_id: string;
+  model_url: string;
+  format: "rad";
+  lod: number;
+  target_gaussians?: number | null;
+  actual_gaussians?: number | null;
+  file_size?: number | null;
+}
+
 export interface ViewerConfig {
   status: "ready" | "unavailable";
   mode?: "single" | "progressive";
+  source?: "final" | "preview";
   artifact_id?: string;
   model_url?: string | null;
   segments?: ViewerSegment[];
+  lods?: ViewerLod[];
   progressive?: boolean;
   format?: "spz";
   message?: string;

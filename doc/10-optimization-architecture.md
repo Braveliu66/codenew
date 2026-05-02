@@ -20,7 +20,7 @@
 ## 架构融合点
 
 - **一个镜像，多队列 worker**：同一 GPU runtime 通过 `PREVIEW_WORKER_INPUT_TYPE=images|video|camera` 区分消费队列和默认管线。
-- **两套 registry 视图**：图片 worker 使用 image registry，只启用 LiteVGGT、EDGS、Spark、FFmpeg；视频/摄像头 worker 使用 video registry，只启用 LingBot-Map、Spark、FFmpeg。
+- **两套 registry 视图**：图片 worker 使用 image registry，只启用 LiteVGGT、EDGS、Spark；视频/摄像头 worker 使用 video registry，默认只走 LingBot-Map 原生 `video_path` 输入和 Spark，FFmpeg 仅作为遗留工具保留。
 - **统一 Spark 输出**：图片、视频、摄像头最终都转为 SPZ，后端 artifact 和前端 Viewer 不需要区分算法来源。
 - **SSE 驱动增量加载**：摄像头分片完成后写入 `preview_spz_segment` artifact，并通过 `preview_segment_ready` 通知 Viewer 增量加载。
 
@@ -30,3 +30,34 @@
 - `python -m backend.scripts.check_preview_runtime` 是镜像准入检查；image/video/camera 三种 worker 都必须通过。
 - `docker system df -v` 和镜像保存包大小用于验证瘦身收益。
 - 如果 Torch/CUDA 版本冲突，优先保留 CUDA 12.8 / Torch 2.8 基线，再针对 LiteVGGT 或 EDGS 做局部依赖修正。
+
+## Fused3DGS 精细重建融合策略
+
+精细重建融合采用“先解耦、后融合”的策略。
+
+当前实现：
+
+- Faster-GS 作为 fine training host，由 `Faster-GS.fine_engine` 命令统一入口承载。
+- FastGS VCD、Deblurring-3DGS MLP、3DGS-LM 作为可配置模块进入 `fused3dgs` options。
+- LM 优化器采用间隔调度，而不是连续替换训练循环：默认 `start_iter=3000`、`interval=200`。
+- Deblurring MLP 只在训练态启用：`use_deblur`、`model.training`、`iteration >= start_iter` 同时满足时生效；eval/export 强制禁用。
+- `FusedTrainingLoop` 将 SGD、VCD、Deblur covariance modulation 和 LM interval step 放在同一个主循环调度面，真实训练实现通过 renderer、SGD step、LM optimizer 和 dataloader 注入。
+- FastGS VCD 已支持从多视角 loss map、2D 投影坐标、半径和可见性聚合 gaussian importance score，再调用真实 gaussian set 的 densify/prune 方法。
+- Deblurring MLP 已提供有界 scaling/rotation 调制入口，并保持 rotation quaternion 归一化。
+- CUDA backend 不在初期强行合并 kernel，而是定义 `GaussianRasterizerBackend` 抽象接口：
+  - `FasterGSBackend` 包装 Faster-GS rasterizer。
+  - `LMBackend` 包装 3DGS-LM rasterizer/JVP/JTJ 能力。
+  - `FusedBackend` 预留给未来合并 kernel。
+
+这样做的目的：
+
+- 降低 Faster-GS 与 3DGS-LM 同时修改 `diff-gaussian-rasterization` 带来的合并风险。
+- 让平台先具备可失败、可观测、可扩展的真实产物链路。
+- 后续可以逐个替换真实算法实现，而不需要重写任务队列、artifact、viewer 和部署流程。
+
+仍需验证的优化点：
+
+- FastGS VCD 与原仓库完整 clone/split/prune 策略的一致性。
+- Deblurring MLP 接入真实 Faster-GS 协方差构建路径后的数值稳定性。
+- 3DGS-LM JVP/JTJ kernel 与 Faster-GS 后端之间的切换成本和 optimizer state 同步。
+- `FusedBackend` 合并 kernel 后的训练速度、显存峰值和收敛质量。

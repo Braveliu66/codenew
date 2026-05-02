@@ -170,3 +170,50 @@ GPU worker 启动失败：
 - 确认 `backend` 服务已启动。
 - 确认 `http://localhost:8000` 可访问。
 - 确认前端环境变量 `NEXT_PUBLIC_API_BASE_URL` 指向 `http://localhost:8000`。
+
+## 9. 精细重建部署补充
+
+当前 compose 已加入 `fine-worker`，但精细重建真实运行还需要额外配置真实算法命令。未配置时任务会失败，不会生成假产物。
+
+### 9.1 必需命令
+
+部署精细重建前至少需要确认：
+
+- `Faster-GS.fine_engine`：调用 `backend/scripts/run_fused3dgs_fine.py`。
+- `Spark-SPZ.compress_final`：调用 `backend/scripts/run_final_spz_convert.py`。
+- `RAD-LOD.export_rad`：调用 `backend/scripts/run_lod_export.py`。
+
+同时需要在运行环境中配置：
+
+```bash
+FUSED3DGS_TRAIN_COMMAND="真实训练命令，必须输出 final.ply"
+SPZ_CONVERTER_COMMAND="可选；真实 final.ply -> final_web.spz 转换命令"
+RAD_LOD_EXPORT_COMMAND="真实 final.ply -> final_lod0..3.rad 导出命令"
+```
+
+如果 `RAD_LOD_EXPORT_COMMAND` 未配置，LOD 阶段会失败，系统不会创建占位 `.rad` 文件。
+
+### 9.2 GPU 环境要求
+
+精细重建部署必须在带 NVIDIA GPU 的环境验证：
+
+- 宿主机 NVIDIA driver 可用。
+- Docker 能访问 GPU。
+- Faster-GS / FastGS / Deblurring-3DGS / 3DGS-LM 所需 CUDA 扩展可编译和 import。
+- `fused3dgs` 的实际训练命令能读取 stage spec，并输出真实非空 `final.ply`。
+
+当前无独显开发环境只完成代码和单元测试，不代表 CUDA runtime 已经可用。
+
+### 9.3 部署验收顺序
+
+建议按以下顺序验收：
+
+1. `npm install` 后执行 `npm run typecheck`。
+2. 构建 Docker runtime：`docker compose -f deploy/docker-compose.preview.yml build`。
+3. 启动服务：`docker compose -f deploy/docker-compose.preview.yml up -d`。
+4. 执行 preview runtime preflight。
+5. 增加 fine runtime preflight，检查 Fused3DGS、Spark final converter、RAD exporter。
+6. 用小样本跑通 preview。
+7. 用同一项目启动 fine task，确认 `fine_tasks` 入队、`fine-worker` 执行。
+8. 确认 artifact 表中存在 `final_ply`、`final_web_spz`、4 个 `lod_rad` 和 `metrics_json`。
+9. 确认 viewer 返回 `source="final"`，并能加载 final 模型和 LOD 列表。

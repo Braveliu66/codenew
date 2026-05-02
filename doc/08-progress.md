@@ -26,7 +26,7 @@
 - 图片项目至少 1 张图片；默认 `preview_pipeline=edgs`，超过 800 张时均匀采样 800 张参与预览。
 - 图片可选 `preview_pipeline=litevggt_spark`，直接将 LiteVGGT 点云转为 Spark-SPZ，不运行 EDGS。
 - 视频/摄像头固定使用 `preview_pipeline=lingbot_map_spark`；LingBot 未配置时明确失败，不回退到 LiteVGGT/EDGS。
-- 视频默认按完整时长均匀采样；可用 `VIDEO_PREVIEW_TARGET_FRAMES` 或 `frame_sample_fps` 控制采样数量。
+- 视频默认直接把原始视频交给 LingBot-Map 的 `video_path` 输入；可用 `lingbot_fps` 或 `LINGBOT_VIDEO_FPS` 控制 LingBot 原生视频读取帧率，不在平台层抽帧。
 - 摄像头分片生成 `preview_spz_segment`，前端通过 SSE 收到 `preview_segment_ready` 后增量加载。
 - 任务失败时不创建假的 `preview.spz` artifact。
 
@@ -42,7 +42,7 @@
 1. 在 Docker/WSL GPU 环境执行完整构建：`docker compose -f deploy/docker-compose.preview.yml build image-worker`。
 2. 执行 image/video/camera worker 的 runtime preflight，确认 Torch CUDA、Transformer Engine、EDGS 扩展、LingBot 权重和 Spark 转换器可用。
 3. 用真实图片验证 LiteVGGT -> EDGS -> Spark-SPZ 和 `litevggt_spark` 两条路径。
-4. 用真实视频验证 LingBot-Map 全时长抽帧覆盖开头、中段、结尾，并输出非空 `preview.spz`。
+4. 用真实视频验证 LingBot-Map 原生 `video_path` 输入，确认无需平台层抽帧即可输出非空 `preview.spz`。
 5. 用摄像头分片验证 progressive segment、SSE 和 Viewer 增量加载。
 6. 对比改造前后的 `docker images`、`docker system df -v` 和镜像保存包大小。
 
@@ -52,3 +52,34 @@
 2. EDGS 使用原仓库许可证，当前记录为非商业研究和个人用途。
 3. Docker 构建默认优先使用国内镜像和本地 `repo-cache`；Docker Hub / NVIDIA 基础镜像仍依赖宿主机 Docker daemon 的镜像源配置。
 4. 统一 CUDA 12.8 / Torch 2.8 偏离 EDGS 官方 CUDA 12.1 建议，需要以真实 GPU 构建和预检结果作为最终准入。
+
+## 2026-05-03 精细重建融合进度
+
+本次更新后，精细重建已经从“未纳入流程”推进到“平台编排、算法调度接口和可注入训练主循环已接入，真实 GPU 算法命令待配置”。
+
+已完成：
+
+- `fine` task 创建后进入 `fine_tasks` 队列，不再由 API 后台任务直接执行。
+- 新增 `fine-worker`，负责素材落盘、调用 `FineSynthesisEngine`、上传 artifact、更新任务和项目状态。
+- `FineSynthesisEngine` 改为线性产物链：`final.ply` -> `final_web.spz` -> `final_lod0.rad` 到 `final_lod3.rad` -> `metrics.json`。
+- requested outputs 按需校验，缺少必需产物时 fine task 失败。
+- 成功结果新增 `artifact_paths` 字典，便于未来按需产物扩展；同时保留 artifact list 用于落库。
+- 新增 `fused3dgs` 包，包含嵌套配置、LM 间隔调度、训练态 Deblurring MLP、VCD 分数聚合、CUDA backend 依赖注入抽象。
+- 新增 `FusedTrainingLoop`，可在同一主循环中调度 SGD、VCD、Deblur covariance modulation 和 LM interval step。
+- `viewer-config` 已实现 final 优先，缺少 final 时回退 preview，并返回 LOD 元数据。
+- 前端项目详情页新增精细重建入口和 LOD 展示。
+
+已验证：
+
+- `python -m pytest tests\test_fused3dgs.py -p no:cacheprovider`
+- `python -m pytest tests\test_fine_engine.py tests\test_fused3dgs.py tests\test_engineering_backend.py tests\test_preview_engine.py -p no:cacheprovider`
+- `python -m pytest tests\test_runtime_configuration.py::RuntimeConfigurationTests::test_current_gpu_resources_aggregates_multi_gpu_status tests\test_runtime_configuration.py::RuntimeConfigurationTests::test_parse_nvidia_smi_gpus_keeps_all_devices -p no:cacheprovider`
+- `python -m compileall -q backend/app/algorithms backend/scripts backend/workers fused3dgs`
+
+未完成：
+
+- 未配置真实 `FUSED3DGS_TRAIN_COMMAND`，因此还不能实际生成 `final.ply`。
+- 未配置真实 `RAD_LOD_EXPORT_COMMAND`，因此还不能实际生成 `.rad` LOD。
+- 未在 GPU 环境编译或运行 Faster-GS / FastGS / Deblurring-3DGS / 3DGS-LM。
+- 前端 `npm run typecheck` 因当前本地 `node_modules` 缺失、`tsc` 不存在而未执行成功。
+- 全量 Python 测试在当前沙箱中有旧 runtime tests 因临时目录权限失败，需要在正常权限环境重跑。

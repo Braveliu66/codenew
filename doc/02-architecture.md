@@ -147,9 +147,9 @@ viewer          Spark 2.0
 - 图片预览镜像使用 Python 3.12 和 CUDA devel，在构建期自动安装 LiteVGGT、EDGS、Spark；模型权重由 worker 启动预检在共享 `model-cache` 中自动补齐。
 - 视频/摄像头预览镜像使用 Python 3.10、CUDA 12.8、PyTorch 2.8.0 cu128 和 LingBot-Map；权重固定为 `model-cache/lingbot-map/lingbot-map-long.pt`，缺失时通过断点续传下载到共享缓存。
 - 图片链路默认为 `LiteVGGT COLMAP export` -> `EDGS train` -> `Spark-SPZ convert`，可通过 `preview_pipeline=litevggt_spark` 跳过 EDGS。
-- 视频链路为 `LingBot-Map` -> `Spark-SPZ convert`，不再默认走 FFmpeg -> LiteVGGT -> EDGS。
+- 视频链路为 `LingBot-Map native video input` -> `Spark-SPZ convert`，不再默认走 FFmpeg -> LiteVGGT -> EDGS，也不在平台层预先抽帧。
 - 实时摄像头链路为浏览器 MediaRecorder 分片 -> `preview_camera_tasks` -> `LingBot-Map streaming` -> 增量 SPZ segment -> SSE 通知 Viewer 增量加载。
-- 图片项目至少 1 张图片；视频项目按完整时长均匀采样，默认不固定 16 帧或 1 fps，可用 `VIDEO_PREVIEW_TARGET_FRAMES` 或 `frame_sample_fps` 控制资源上限。
+- 图片项目至少 1 张图片；视频项目直接把原始视频交给 LingBot-Map 的 `video_path` 输入，由 LingBot 适配层按 `lingbot_fps`/`LINGBOT_VIDEO_FPS` 读取视频，不在平台层做抽帧采样。
 - 前端 Spark Viewer 通过 npm 依赖随 Next.js 构建打包，运行时只访问后端 API 和对象存储产物 URL。
 
 ## 9. 渐进式渲染与 LOD 加载

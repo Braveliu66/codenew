@@ -141,3 +141,11 @@
 2. 精细重建 4.1、Mesh 导出和完整 LOD 产物导出仍显示未接入；实时摄像头已有 LingBot-Map 渐进式预览 MVP。
 3. 分片上传、SSE/WebSocket 事件、用户用量统计和复杂管理员统计仍是后续项。
 4. 所有源码、配置、文档统一使用 UTF-8 编码。
+
+## 7. 2026-05-03 精细重建同步
+
+精细重建不再是完全未接入状态。当前已经完成 API 入队、`fine_tasks` 队列、`fine-worker`、线性产物链、final 优先 viewer、`fused3dgs` 嵌套配置、VCD 分数聚合、Deblur 协方差调制入口、LM 间隔调度和可注入训练主循环。
+
+仍未满足验收标准第 4 条：真实 GPU 环境下还没有跑通 Faster-GS/Fused3DGS 训练，也未实际生成 `final.ply`、`final_web.spz`、`.rad` LOD 和 `metrics.json` 的完整成功链路。部署前必须接入真实训练命令、SPZ converter、RAD exporter，并通过 fine runtime preflight 和小样本端到端验收。
+
+完整差距清单见 `11-fine-reconstruction-deployment-gap.md`。
