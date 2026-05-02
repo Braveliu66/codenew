@@ -675,8 +675,17 @@ def install_lingbot_runtime(lingbot: Path) -> None:
 def install_spark_runtime(spark: Path) -> None:
     registry = os.environ.get("NPM_CONFIG_REGISTRY", "https://registry.npmmirror.com")
     run(["npm", "config", "set", "registry", registry])
+    normalize_spark_shell_scripts(spark)
     run(["npm", "ci"], cwd=spark)
     run(["npm", "run", "build"], cwd=spark)
+
+
+def normalize_spark_shell_scripts(spark: Path) -> None:
+    for script in spark.rglob("*.sh"):
+        content = script.read_bytes()
+        normalized = content.replace(b"\r\n", b"\n")
+        if normalized != content:
+            script.write_bytes(normalized)
 
 
 def prune_spark_runtime(spark: Path) -> None:

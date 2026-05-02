@@ -150,7 +150,6 @@ services:
 
   video-worker:
     image: three-dgs-gpu-runtime:local
-    build: *gpu-runtime-build
     command: sh -lc "python3 -m backend.scripts.ensure_model_weights --models lingbot-map --cache-root /model-cache && alembic upgrade head && python3 -m backend.workers.preview_worker"
     environment:
       DATABASE_URL: postgresql+psycopg://three_dgs:three_dgs@postgres:5432/three_dgs
@@ -192,7 +191,6 @@ services:
 
   camera-worker:
     image: three-dgs-gpu-runtime:local
-    build: *gpu-runtime-build
     command: sh -lc "python3 -m backend.scripts.ensure_model_weights --models lingbot-map --cache-root /model-cache && alembic upgrade head && python3 -m backend.workers.preview_worker"
     environment:
       DATABASE_URL: postgresql+psycopg://three_dgs:three_dgs@postgres:5432/three_dgs

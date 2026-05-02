@@ -229,6 +229,22 @@ class RuntimeConfigurationTests(unittest.TestCase):
 
         self.assertIn(["--no-build-isolation", "--no-deps", "-e", str(Path("/opt/three-dgs/repos/lingbot-map"))], pip_installs)
 
+    def test_gpu_runtime_normalizes_spark_shell_scripts_before_npm_ci(self) -> None:
+        commands: list[tuple[list[str], Path | None]] = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spark = Path(tmpdir) / "spark"
+            script = spark / "rust" / "build_rust_wasm.sh"
+            script.parent.mkdir(parents=True)
+            script.write_bytes(b"#!/usr/bin/env bash\r\necho build\r\n")
+
+            with patch.object(build_gpu_runtime, "run", side_effect=lambda command, cwd=None, **_: commands.append((command, cwd))):
+                build_gpu_runtime.install_spark_runtime(spark)
+
+            self.assertEqual(script.read_bytes(), b"#!/usr/bin/env bash\necho build\n")
+
+        self.assertEqual(commands[1], (["npm", "ci"], spark))
+
     def test_gpu_runtime_edgs_wheel_uses_hf_endpoint(self) -> None:
         pip_installs: list[list[str]] = []
 
