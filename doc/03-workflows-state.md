@@ -80,7 +80,7 @@ sequenceDiagram
 
 1. 前端请求摄像头权限。
 2. 前端将视频帧按固定频率发送到后端或实时 Worker。
-3. 前端使用 MediaRecorder 每 5 秒上传一个视频窗口。
+3. 前端使用 MediaRecorder 每 1 秒上传一个视频窗口。
 4. API 创建 `preview_camera_tasks` 任务，camera-worker 使用 LingBot-Map streaming 模式生成窗口级点云。
 5. Worker 将窗口级点云转换为 `preview_segment_*.spz`，写入 `preview_spz_segment` artifact。
 6. Viewer 通过 SSE 收到 `preview_segment_ready` 后拉取新增 segment 并追加渲染；未完成时间段显示为灰色占位。
