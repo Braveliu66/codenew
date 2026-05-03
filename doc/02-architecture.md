@@ -51,7 +51,7 @@ flowchart LR
 | 用户总览 | 展示项目总数、训练中数量、已完成数量和总占用 |
 | 问题反馈 | 用户提交问题、截图、项目关联和联系方式 |
 | 管理面板 | 展示 GPU、队列、Worker、用户存储和任务日志 |
-| 关于页面 | 展示算法许可证和非商业限制 |
+
 
 ## 3. 后端模块
 
@@ -69,13 +69,13 @@ flowchart LR
 | Scheduler | 从 Redis 获取任务并分配 GPU Worker |
 | Worker Agent | 执行算法适配器、产物上传、日志回传 |
 | Resource Monitor | 采集 CPU、GPU、显存、队列和 Worker 心跳 |
-| License Registry | 保存算法许可证、版本和权重来源 |
+
 
 ## 4. 算法适配层
 
 算法适配层的目标是屏蔽各算法仓库的输入输出差异，让 Worker 只处理统一任务格式。
 
-算法适配层必须调用真实算法代码。未安装算法、缺少权重、GPU 不满足要求或许可证信息未登记时，应返回明确错误，不能生成假产物标记任务成功。
+算法适配层必须调用真实算法代码。未安装算法、缺少权重、GPU 不满足要求，应返回明确错误，不能生成假产物标记任务成功。
 
 ### 统一输入
 
@@ -135,22 +135,8 @@ viewer          Spark 2.0
 
 后续扩展到多机时，只需要增加 GPU Worker 节点，并让 Worker 连接同一 Redis、PostgreSQL 和对象存储。
 
-## 7. 当前实现同步
-
-- API 服务、image-worker、video-worker、camera-worker、PostgreSQL、Redis、MinIO、frontend 已在 Compose 中拆分为独立服务。
-- API 使用 SQLAlchemy 2.x 模型和 Alembic 迁移；启动时 seed 默认管理员和算法登记记录。
-- image-worker 使用 LiteVGGT/EDGS/Spark 独立镜像；video-worker 与 camera-worker 使用 LingBot-Map/Spark 独立镜像，避免算法依赖相互污染。
-- 本机 CPU-only 开发环境允许 SQLite/本地对象存储适配用于测试，但 Docker/WSL 目标架构以 PostgreSQL、Redis、MinIO 为准。
 
 ## 8. GPU 预览链路同步
-
-- 图片预览镜像使用 Python 3.12 和 CUDA devel，在构建期自动安装 LiteVGGT、EDGS、Spark；模型权重由 worker 启动预检在共享 `model-cache` 中自动补齐。
-- 视频/摄像头预览镜像使用 Python 3.10、CUDA 12.8、PyTorch 2.8.0 cu128 和 LingBot-Map；权重固定为 `model-cache/lingbot-map/lingbot-map-long.pt`，缺失时通过断点续传下载到共享缓存。
-- 图片链路默认为 `LiteVGGT COLMAP export` -> `EDGS train` -> `Spark-SPZ convert`，可通过 `preview_pipeline=litevggt_spark` 跳过 EDGS。
-- 视频链路为 `LingBot-Map native video input` -> `Spark-SPZ convert`，不再默认走 FFmpeg -> LiteVGGT -> EDGS，也不在平台层预先抽帧。
-- 实时摄像头链路为浏览器 MediaRecorder 分片 -> `preview_camera_tasks` -> `LingBot-Map streaming` -> 增量 SPZ segment -> SSE 通知 Viewer 增量加载。
-- 图片项目至少 1 张图片；视频项目直接把原始视频交给 LingBot-Map 的 `video_path` 输入，由 LingBot 适配层按 `lingbot_fps`/`LINGBOT_VIDEO_FPS` 读取视频，不在平台层做抽帧采样。
-- 前端 Spark Viewer 通过 npm 依赖随 Next.js 构建打包，运行时只访问后端 API 和对象存储产物 URL。
 
 ## 9. 渐进式渲染与 LOD 加载
 
