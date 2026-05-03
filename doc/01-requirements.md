@@ -123,28 +123,7 @@
 10. 实时视频页面可以同时显示摄像头画面和实时粗重建效果，结束后支持重拍或进入精细重建。
 11. 算法功能不得依赖占位函数或假产物通过验收。
 
-## 6. 当前实现范围同步
 
-截至 2026-04-25，当前代码已落地以下需求：
-
-1. 简单账号系统：用户名/密码注册和登录，JWT Bearer token，`user/admin` 角色。
-2. 项目隔离：普通用户只能访问自己的项目、素材、任务和产物；管理员接口按角色控制。
-3. 工程化数据层：以 PostgreSQL 为目标，使用 SQLAlchemy 2.x 和 Alembic；本机单元测试使用 SQLite 验证同一模型。
-4. 任务队列：预览任务由 API 创建并推送 Redis，独立 worker 拉取执行，API 不直接运行长任务。
-5. 对象存储：Docker/WSL 目标使用 MinIO；上传文件和成功 artifact 必须记录真实大小和对象路径。
-6. 真实算法约束：未配置 LiteVGGT、EDGS、Spark-SPZ、权重、CUDA 或转换器时任务失败，不创建成功 artifact。
-7. 前端页面：已有工作台、登录、上传、项目列表、详情、实时视频不可用页、管理、反馈和关于页骨架。
-
-当前仍未完成的需求：
-
-1. 真实 CUDA 环境下的 LiteVGGT → EDGS → Spark-SPZ 成功路径还需在 Docker/WSL 部署后验证。
-2. 精细重建 4.1、Mesh 导出和完整 LOD 产物导出仍显示未接入；实时摄像头已有 LingBot-Map 渐进式预览 MVP。
-3. 分片上传、SSE/WebSocket 事件、用户用量统计和复杂管理员统计仍是后续项。
-4. 所有源码、配置、文档统一使用 UTF-8 编码。
-
-## 7. 2026-05-03 精细重建同步
-
-精细重建不再是完全未接入状态。当前已经完成 API 入队、`fine_tasks` 队列、`fine-worker`、线性产物链、final 优先 viewer、`fused3dgs` 嵌套配置、VCD 分数聚合、Deblur 协方差调制入口、LM 间隔调度和可注入训练主循环。
 
 仍未满足验收标准第 4 条：真实 GPU 环境下还没有跑通 Faster-GS/Fused3DGS 训练，也未实际生成 `final.ply`、`final_web.spz`、`.rad` LOD 和 `metrics.json` 的完整成功链路。部署前必须接入真实训练命令、SPZ converter、RAD exporter，并通过 fine runtime preflight 和小样本端到端验收。
 
